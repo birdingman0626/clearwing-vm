@@ -184,7 +184,7 @@ jobject M_java_lang_reflect_Method_invoke_java_lang_Object_Array1_java_lang_Obje
         if (isInterface)
             func = resolveInterfaceMethod(ctx, owner, (int) method->F_offset, object);
         else if (isStatic or isConstructor)
-            func = (void *) method->F_offset;
+            func = (void *) method->F_address;
         else
             func = ((void **) object->vtable)[method->F_offset];
         ffi_cif cif;

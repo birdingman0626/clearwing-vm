@@ -51,6 +51,7 @@ public class BytecodeClass {
 	private final ArrayList<BytecodeMethod> vtable = new ArrayList<>();
 	private BytecodeClass superClass;
 	private BytecodeClass[] interfaceClasses;
+	private boolean jni;
 
 	public BytecodeClass (String name, String superName, String[] interfaces, int access) {
 		this.originalName = name;
@@ -399,6 +400,24 @@ public class BytecodeClass {
 
 		// Methods
 		for (BytecodeMethod method : methods) {
+			if (usesJni() && method.isNative()) {
+				appendMethodDeclaration(builder, method);
+				builder.append(" {\n\t");
+				if (!method.getSignature().getReturnType().isVoid())
+					builder.append("return ");
+				builder.append("invokeJni<").append(method.getSignature().getReturnType().getCppType()).append(">(ctx, ");
+				builder.append("\"").append(name).append(":").append(method.getOriginalName()).append("\", ");
+				if (method.isStatic())
+					builder.append("&class_").append(qualifiedName);
+				else
+					builder.append("self");
+				for (int i = 0; i < method.getSignature().getParamTypes().length; i++)
+					builder.append(", param").append(i);
+				builder.append(");\n");
+				builder.append("}\n\n");
+				continue;
+			}
+			
 			if (method.isNative() || method.isAbstract() || method.isIntrinsic())
 				continue;
 
@@ -583,8 +602,12 @@ public class BytecodeClass {
 			builder.append("static MethodMetadata methods").append("[] {\n");
 			for (BytecodeMethod method : methods) {
 				builder.append("\t{ \"").append(method.getOriginalName()).append("\"");
-				if (method.isStatic() || method.isConstructor())
+				if (method.isAbstract())
+					builder.append(", 0");
+				else
 					builder.append(", (intptr_t) ").append(method.getName());
+				if (method.isStatic() || method.isConstructor())
+					builder.append(", 0");
 				else
 					builder.append(isInterface() ? ", INDEX_" : ", VTABLE_").append(method.getName().substring(2));
 				builder.append(", \"").append(method.getDesc()).append("\", ").append(method.getAccess()).append(" },\n");
@@ -756,6 +779,14 @@ public class BytecodeClass {
 
 	public BytecodeClass[] getInterfaceClasses() {
 		return interfaceClasses;
+	}
+	
+	public void markJni() {
+		jni = true;
+	}
+	
+	public boolean usesJni() {
+		return jni;
 	}
 
 	@Override

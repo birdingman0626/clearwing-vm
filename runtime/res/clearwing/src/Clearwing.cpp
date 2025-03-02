@@ -42,6 +42,7 @@
 #include <ranges>
 #include <chrono>
 #include <thread>
+#include <java/lang/ref/WeakReference.h>
 
 static_assert(sizeof(Class) == sizeof(java_lang_Class)); // Loosely ensure generated Class structure matches native representation
 static_assert(std::alignment_of<java_lang_Object>() == std::alignment_of<jlong>()); // Embedding Object in type struct should not add padding
@@ -49,6 +50,7 @@ static_assert(std::alignment_of<java_lang_Object>() == std::alignment_of<jlong>(
 static ankerl::unordered_dense::set<jobject> *objects;
 static ankerl::unordered_dense::set<jobject> *rootObjects;
 static std::vector<jobject> collectedObjects;
+static std::multimap<jobject, jweak> weakReferences;
 static std::mutex objectsLock;
 static jthread collectionThread;
 static std::map<std::string, jclass> *classes;
@@ -56,7 +58,9 @@ static std::recursive_mutex criticalLock;
 static std::mutex *registryMutex;
 static std::vector<jcontext> threadContexts;
 static std::vector<jobject> deepMarkedObjects;
+static bool vmInitialized;
 static volatile bool exiting;
+static thread_local jcontext threadContext;
 
 std::atomic_int64_t heapUsage;
 std::atomic_int64_t allocationsSinceCollection;
@@ -84,16 +88,35 @@ Class class_boolean { .nativeName = (intptr_t)"Z", .size = sizeof(jbool), .stati
 Class class_void { .nativeName = (intptr_t)"V", .size = 0, .staticInitializer = (intptr_t) clinitPrimitive, .markFunction = (intptr_t) markPrimitive, .primitive = true, .access = 0x400 };
 
 void runVM(main_ptr entrypoint) {
-    // Todo: Initialized flag to make this reusable
-    registerClass(&class_byte);
-    registerClass(&class_char);
-    registerClass(&class_short);
-    registerClass(&class_int);
-    registerClass(&class_long);
-    registerClass(&class_float);
-    registerClass(&class_double);
-    registerClass(&class_boolean);
-    registerClass(&class_void);
+    auto mainContext = initVM();
+
+    auto thread = (jthread) gcAllocEternal(mainContext, &class_java_lang_Thread); // Todo: Ensure all fields are set, since constructor isn't called
+    thread->F_nativeContext = (intptr_t) mainContext;
+    mainContext->thread = thread;
+    thread->F_entrypoint = (intptr_t) entrypoint;
+    thread->F_name = (intptr_t) stringFromNative(mainContext, "Main");
+    threadEntrypoint(mainContext, thread);
+
+    shutdownVM(mainContext);
+    exit(0);
+}
+
+jcontext initVM() {
+    if (vmInitialized) {
+        // Todo: Clean up all VM state (Global members, static class members)
+        // Todo: Clean up all existing objects (Excluding classes and other ephemeral objects)
+    } else {
+        registerClass(&class_byte);
+        registerClass(&class_char);
+        registerClass(&class_short);
+        registerClass(&class_int);
+        registerClass(&class_long);
+        registerClass(&class_float);
+        registerClass(&class_double);
+        registerClass(&class_boolean);
+        registerClass(&class_void);
+    }
+    vmInitialized = true;
 
     auto mainContext = createContext();
 
@@ -106,21 +129,16 @@ void runVM(main_ptr entrypoint) {
     collectionCtx->nativeThread = new std::thread;
     *collectionCtx->nativeThread = std::thread(collectionThreadFunc, collectionCtx);
 
-    auto thread = (jthread) gcAllocEternal(mainContext, &class_java_lang_Thread); // Todo: Ensure all fields are set, since constructor isn't called
-    thread->F_nativeContext = (intptr_t) mainContext;
-    mainContext->thread = thread;
-    thread->F_entrypoint = (intptr_t) entrypoint;
-    thread->F_name = (intptr_t) stringFromNative(mainContext, "Main");
-    threadEntrypoint(mainContext, thread);
-
-    exitVM(mainContext, 0);
+    return mainContext;
 }
 
-void exitVM(jcontext ctx, int result) {
+void shutdownVM(jcontext ctx) {
     if (exiting) return;
     exiting = true;
-    ctx->dead = true;
-    ctx->suspended = true;
+    if (ctx) {
+        ctx->dead = true;
+        ctx->suspended = true;
+    }
     auto timeout = std::chrono::system_clock::now() + std::chrono::seconds(10);
     while (std::chrono::system_clock::now() < timeout) {
         suspendVM = true;
@@ -136,7 +154,18 @@ void exitVM(jcontext ctx, int result) {
         if (done)
             break;
     }
-    exit(result);
+}
+
+void attachThread(jcontext ctx) {
+    threadContext = ctx;
+}
+
+void detachThread() {
+    threadContext = nullptr;
+}
+
+jcontext getThreadContext() {
+    return threadContext;
 }
 
 /// Registers a class and populates its object fields. Does not throw exceptions.
@@ -319,7 +348,7 @@ void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject
 
     int offset;
     {
-        std::lock_guard guard(lock);
+        std::lock_guard guard(lock); // Todo: Making thread_local rather than locking is probably much faster
 
         std::map<jclass, std::vector<int>> &objectMappings = mappings[interface];
 
@@ -438,6 +467,8 @@ jobject makeEphemeral(jobject object) {
 }
 
 jobject protectObject(jobject object) {
+    if (object->gcMark == GC_MARK_ETERNAL)
+        return object;
     return makeRoot(object, GC_MARK_PROTECTED);
 }
 
@@ -445,9 +476,27 @@ jobject unprotectObject(jobject object) {
     return makeRegular(object, GC_MARK_PROTECTED);
 }
 
+void registerWeak(jweak reference) {
+    objectsLock.lock();
+    weakReferences.emplace((jobject)reference->F_ptr, reference);
+    objectsLock.unlock();
+}
+
+void deregisterWeak(jweak reference) {
+    objectsLock.lock();
+    for (auto[it, end] = weakReferences.equal_range((jobject)reference->F_ptr); it != end; ++it) {
+        if (it->second != reference)
+            continue;
+        weakReferences.erase(it);
+        break;
+    }
+    objectsLock.unlock();
+}
+
 /// Creates a new context. Does not throw exceptions.
 jcontext createContext() {
     auto context = new Context;
+    context->jniEnv = createJni(context);
     acquireCriticalLock();
     threadContexts.emplace_back(context);
     releaseCriticalLock();
@@ -456,6 +505,7 @@ jcontext createContext() {
 
 /// Destroys a context. Does not throw exceptions.
 void destroyContext(jcontext context) {
+    destroyJni(context->jniEnv);
     acquireCriticalLock();
     std::erase(threadContexts, context);
     releaseCriticalLock();
@@ -464,6 +514,8 @@ void destroyContext(jcontext context) {
 
 static void collectionThreadFunc(jcontext ctx) {
     static std::vector<jobject> collected;
+
+    attachThread(ctx);
 
     try {
         FrameInfo frameInfo{ "GC:collect", 0 };
@@ -577,8 +629,19 @@ void runGC(jcontext ctx) {
 
     // Mark stack objects
     for (auto threadContext : threadContexts) {
+        if (threadContext->jniException)
+            ((gc_mark_ptr) ((jclass) threadContext->jniException->parent.clazz)->markFunction)((jobject)threadContext->jniException, mark, 0);
+
+        for (auto global : threadContext->globalRefs)
+            ((gc_mark_ptr) ((jclass) global->clazz)->markFunction)(global, mark, 0);
+
         for (int i = 0; i < threadContext->stackDepth; i++) {
             const auto &frame = threadContext->frames[i];
+
+            for (auto &localFrame : frame.localRefs)
+                for (auto local : localFrame)
+                    ((gc_mark_ptr) ((jclass) local->clazz)->markFunction)(local, mark, 0);
+
             for (int j = 0; j < (int)frame.info->size; j++) {
                 const auto obj = frame.frame[j].o;
                 if (objects->contains(obj))
@@ -605,6 +668,10 @@ void runGC(jcontext ctx) {
             continue;
         obj->gcMark = GC_MARK_COLLECTED;
         collectedObjects.emplace_back(obj);
+
+        // Update weak references
+        for (auto[it, end] = weakReferences.equal_range(obj); it != end; ++it)
+            it->second->F_ptr = 0; // Todo: Always updating weak references here rather than at finalization may be problematic in some cases for JNI
     }
 
 #if false // Todo: Use macro
@@ -809,7 +876,7 @@ void throwIOException(jcontext ctx, const char *message) {
     constructAndThrow<&class_java_io_IOException, init_java_io_IOException>(ctx);
 }
 
-void throwRuntimeException(jcontext ctx, const char *message) {
+NORETURN void throwRuntimeException(jcontext ctx, const char *message) {
     if (message)
         constructAndThrowMsg<&class_java_lang_RuntimeException, init_java_lang_RuntimeException_java_lang_String>(ctx, message);
     constructAndThrow<&class_java_lang_RuntimeException, init_java_lang_RuntimeException>(ctx);

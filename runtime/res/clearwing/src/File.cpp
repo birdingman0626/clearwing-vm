@@ -49,7 +49,7 @@ jlong M_java_io_File_lastModified_R_long(jcontext ctx, jobject self) {
     struct stat s{};
     if (stat(stringToNative(ctx, (jstring) ((java_io_File *) NULL_CHECK(self))->F_path), &s))
         return 0;
-#if defined(__WIN32__) || defined(__WINRT__)
+#if defined(__WIN32__) || defined(__WINRT__) || defined(__APPLE__)
     return s.st_mtime;
 #else
     return s.st_mtim.tv_sec;
@@ -102,16 +102,9 @@ jobject SM_java_io_File_listRoots_R_Array1_java_io_File(jcontext ctx) {
 #else
     collected.emplace_back("/");
 #endif
-    auto array = createArrayProtected(ctx, &class_java_lang_String, (int)collected.size());
-    for (int i = 0; i < (int)collected.size(); i++) {
-        auto string = (jobject) stringFromNativeProtected(ctx, collected[i].c_str());
-        auto file = gcAllocProtected(ctx, &class_java_io_File);
-        init_java_io_File_java_lang_String(ctx, file, string);
-        ((jobject *)array->data)[i] = file;
-        unprotectObject(string);
-        unprotectObject(file);
-    }
-    unprotectObject((jobject)array);
+    auto array = createArray(ctx, &class_java_lang_String, (int)collected.size());
+    for (int i = 0; i < (int)collected.size(); i++)
+        ((jobject *)array->data)[i] = (jobject) stringFromNative(ctx, collected[i]);
     return (jobject) array;
 }
 

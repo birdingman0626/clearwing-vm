@@ -443,6 +443,10 @@ public class Parser extends ClassVisitor {
                     instructions.remove(i--);
         }
 
+        // Todo: This whole exception handling approach is overcomplicated and not super efficient
+        // Todo: A much better approach would be to store integer "locations" into a local variable and map locations to exception blocks when unwinding
+        // Todo: This could also apply to line numbers to reduce memory accesses. Use a pointer to a local variable to avoid an indirection.
+        
         /**
          * Insert helper instructions for try-catch blocks
          */

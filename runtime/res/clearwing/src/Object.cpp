@@ -125,18 +125,18 @@ static void *vtable_java_lang_Object[] {
 };
 
 static MethodMetadata methodMetadata[] {
-        { "<init>", (intptr_t) init_java_lang_Object, "()V", 0x400 },
-        { "hashCode", 0, "()I", 0x400 },
-        { "equals", 1, "(Ljava/lang/Object;)Z", 0x400 },
-        { "clone", 2, "()Ljava/lang/Object;", 0x400 },
-        { "getClass", 3, "()Ljava/lang/Class;", 0x400 },
-        { "toString", 4, "()Ljava/lang/String;", 0x400 },
-        { "finalize", 5, "()V", 0x400 },
-        { "notify", 6, "()V", 0x400 },
-        { "notifyAll", 7, "()V", 0x400 },
-        { "wait", 8, "()V", 0x400 },
-        { "wait", 9, "(J)V", 0x400 },
-        { "wait", 10, "(JI)V", 0x400 },
+        { "<init>", (intptr_t) init_java_lang_Object, 0, "()V", 0x400 },
+        { "hashCode", (intptr_t) M_java_lang_Object_hashCode_R_int, 0, "()I", 0x400 },
+        { "equals", (intptr_t) M_java_lang_Object_equals_java_lang_Object_R_boolean, 1, "(Ljava/lang/Object;)Z", 0x400 },
+        { "clone", (intptr_t) M_java_lang_Object_clone_R_java_lang_Object, 2, "()Ljava/lang/Object;", 0x400 },
+        { "getClass", (intptr_t) M_java_lang_Object_getClass_R_java_lang_Class, 3, "()Ljava/lang/Class;", 0x400 },
+        { "toString", (intptr_t) M_java_lang_Object_toString_R_java_lang_String, 4, "()Ljava/lang/String;", 0x400 },
+        { "finalize", (intptr_t) M_java_lang_Object_finalize, 5, "()V", 0x400 },
+        { "notify", (intptr_t) M_java_lang_Object_notify, 6, "()V", 0x400 },
+        { "notifyAll", (intptr_t) M_java_lang_Object_notifyAll, 7, "()V", 0x400 },
+        { "wait", (intptr_t) M_java_lang_Object_wait, 8, "()V", 0x400 },
+        { "wait", (intptr_t) M_java_lang_Object_wait_long, 9, "(J)V", 0x400 },
+        { "wait", (intptr_t) M_java_lang_Object_wait_long_int, 10, "(JI)V", 0x400 },
 };
 
 Class class_java_lang_Object {

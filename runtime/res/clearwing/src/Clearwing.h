@@ -63,6 +63,9 @@ typedef bool jbool;
 typedef void jvoid;
 typedef jlong jref; // Store references as jlong to ensure unspecified native pointer size doesn't change struct layout
 
+typedef struct JNINativeInterface_ *jni;
+typedef struct JavaVM_ *jvm;
+
 typedef struct Array *jarray;
 typedef struct Context *jcontext;
 typedef struct StackFrame *jframe;
@@ -72,6 +75,10 @@ typedef struct Class *jclass;
 typedef struct java_lang_Object *jobject;
 typedef struct java_lang_String *jstring;
 typedef struct java_lang_Thread *jthread;
+typedef struct java_lang_Throwable *jthrowable;
+typedef struct java_lang_ref_WeakReference *jweak;
+typedef struct java_lang_reflect_Method *jmethod;
+typedef struct java_lang_reflect_Field *jfield;
 
 typedef void (*static_init_ptr)(jcontext ctx);
 typedef void (*init_annotations_ptr)(jcontext ctx);
@@ -94,6 +101,7 @@ typedef struct FieldMetadata {
 
 typedef struct MethodMetadata {
     const char *name;
+    jlong address;
     jlong offset;
     const char *desc;
     int access;
@@ -178,6 +186,14 @@ extern void init_java_lang_NullPointerException(jcontext ctx, jobject object);
 extern volatile bool suspendVM;
 
 void runVM(main_ptr entrypoint);
+jvm getJavaVM();
+jni createJni(jcontext ctx);
+void destroyJni(jni env);
+jcontext initVM();
+void shutdownVM(jcontext ctx);
+void attachThread(jcontext ctx);
+void detachThread();
+jcontext getThreadContext();
 void threadEntrypoint(jcontext ctx, jthread thread);
 
 const char *getOSLanguage();
@@ -195,11 +211,12 @@ jobject makeEternal(jobject object);
 jobject makeEphemeral(jobject object);
 jobject protectObject(jobject object);
 jobject unprotectObject(jobject object);
+void registerWeak(jweak reference);
+void deregisterWeak(jweak reference);
 void runGC(jcontext ctx);
 void markDeepObject(jobject obj);
 jcontext createContext();
 void destroyContext(jcontext ctx);
-void exitVM(jcontext ctx, int result);
 
 jclass getArrayClass(jclass componentType, int dimensions);
 jarray createArray(jcontext ctx, jclass type, int length);
@@ -855,17 +872,21 @@ struct StackFrame {
     jobject monitor{}; // The monitor for synchronized methods
     int lineNumber{}; // Current line number
     jobject exception{}; // The currently thrown exception
+    std::vector<std::vector<jobject>> localRefs{}; // Local reference frames for JNI
 };
 
 struct Context {
+    jni jniEnv{}; // This must be the first field
+    jthrowable jniException{};
     jthread thread{};
-    std::thread *nativeThread; // Null for main thread
+    std::thread *nativeThread; // Null for main thread (Or JNI attached threads)
     StackFrame frames[MAX_STACK_DEPTH];
     int stackDepth{};
     volatile bool suspended{}; // Considered at safepoint, must check for suspendVM flag when un-suspending
     std::recursive_mutex lock; // Lock on changing the stack or blocking monitor
     std::atomic<jobject> blockedBy; // Object monitor blocking the current thread, or null
     bool dead{};
+    std::vector<jobject> globalRefs{}; // Global JNI references
 };
 
 /// Checks if an object is null. Throws exceptions.
@@ -937,6 +958,34 @@ void lockGuard(jcontext ctx, std::mutex &mutex, jframe frameRef, B block) {
     }, [&]{
         mutex.unlock();
     });
+}
+
+template<typename R, typename... Args>
+R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
+    FrameInfo frameInfo { method, 0 };
+    jframe frame = pushStackFrame(ctx, &frameInfo, nullptr);
+    jlong result;
+    tryFinally(ctx, frame, [&] {
+        frame->localRefs.emplace_back();
+        // ctx->suspended = true; // Todo: Suspend when entering JNI? May be necessary, but makes memory bugs much more likely
+        typedef R(* FuncPtr)(jcontext, Args...);
+        auto func = (FuncPtr)ptr;
+        if constexpr (std::is_same_v<R, void>)
+            func(ctx, args...);
+        else
+            *(R *)&result = func(ctx, args...);
+    }, [&] {
+        frame->localRefs.clear();
+        if (ctx->jniException)
+            throwException(ctx, (jobject)ctx->jniException);
+        // ctx->suspended = false; // Todo
+        SAFEPOINT();
+        popStackFrame(ctx);
+    });
+    if constexpr (std::is_same_v<R, void>)
+        return;
+    else
+        return *(R *)&result;
 }
 
 template <typename B, typename C, typename F>

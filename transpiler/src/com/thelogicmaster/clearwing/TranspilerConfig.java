@@ -12,6 +12,7 @@ public class TranspilerConfig {
     private List<String> nonOptimized = new ArrayList<>(); // Patterns for classes to not optimize out even if unused
     private List<String> sourceIgnores = new ArrayList<>(); // Patterns for source files to ignore for JNIGen style inlined C++
     private List<String> intrinsics = new ArrayList<>(); // A list of methods to treat as native so that they can be patched (For example, `java.lang.Integer.toString()Ljava/lang/String;`)
+    private List<String> jniClasses = new ArrayList<>(); // A list of patterns to generate JNI class bindings for (As opposed to regular native linked functions)
     private List<String> definitions = new ArrayList<>(); // Custom definitions to add to config.hpp
     private boolean projectFiles = true; // Whether to generate basic project files like the CMake config
     private String mainClass; // An optional "main class" that contains the entrypoint main function
@@ -28,6 +29,7 @@ public class TranspilerConfig {
         nonOptimized = getArray(json, "nonOptimized");
         nonOptimized.addAll(getArray(json, "reflective")); // Legacy config item
         sourceIgnores = getArray(json, "sourceIgnores");
+        jniClasses = getArray(json, "jniClasses");
         intrinsics = getArray(json, "intrinsics");
         definitions = getArray(json, "definitions");
         projectFiles = json.optBoolean("generateProjectFiles", false);
@@ -75,6 +77,14 @@ public class TranspilerConfig {
 
     public void setIntrinsics(List<String> intrinsics) {
         this.intrinsics = intrinsics;
+    }
+
+    public List<String> getJniClasses() {
+        return jniClasses;
+    }
+
+    public void setJniClasses(List<String> jniClasses) {
+        this.jniClasses = jniClasses;
     }
 
     public boolean isWritingProjectFiles() {

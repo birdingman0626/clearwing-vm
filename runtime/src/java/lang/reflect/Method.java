@@ -14,6 +14,7 @@ import java.util.ArrayList;
  * @author shannah
  */
 public class Method {
+    private final long address;
     private final long offset;
     private final Class<?> declaringClass;
     private final String desc;
@@ -22,8 +23,10 @@ public class Method {
     private Annotation[] annotations = new Annotation[0];
     private Class<?>[] parameterTypes;
     private Class<?> returnType;
+    private long nativeFunc;
 
-    private Method (long offset, Class<?> declaringClass, String desc, String name, int modifiers) {
+    private Method (long address, long offset, Class<?> declaringClass, String desc, String name, int modifiers) {
+        this.address = address;
         this.offset = offset;
         this.declaringClass = declaringClass;
         this.desc = desc;

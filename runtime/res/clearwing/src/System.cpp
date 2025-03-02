@@ -30,7 +30,8 @@ jlong SM_java_lang_System_currentTimeMillis_R_long(jcontext ctx) {
 }
 
 void SM_java_lang_System_exit0_int(jcontext ctx, jint code) {
-    exitVM(ctx, code);
+    shutdownVM(ctx);
+    exit(code);
 }
 
 void SM_java_lang_System_gc(jcontext ctx) {
@@ -46,7 +47,7 @@ jobject SM_java_lang_System_getProperty_java_lang_String_R_java_lang_String(jcon
     std::lock_guard guard(lock);
     auto it = cache.find(key);
     if (it != cache.end())
-        return it->second ? (jobject) stringFromNative(ctx, it->second) : nullptr;
+        return (jobject) stringFromNative(ctx, it->second);
     auto &entry = cache[key];
     entry = getSystemProperty(key);
     return entry ? (jobject) stringFromNative(ctx, entry) : nullptr;

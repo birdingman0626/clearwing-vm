@@ -7,9 +7,13 @@
 #include "java/lang/Object.h"
 #include "java/lang/Throwable.h"
 
+#include <thread>
+
 extern "C" {
 
 void threadEntrypoint(jcontext ctx, jthread thread) {
+    attachThread(ctx);
+
     try {
         jtype frame[1];
         FrameInfo frameInfo { "java/lang/Thread:threadEntrypoint", 1 };

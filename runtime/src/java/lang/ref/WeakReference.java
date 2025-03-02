@@ -23,41 +23,38 @@
 
 package java.lang.ref;
 
-// Todo: This is just a placeholder
-
 /**
  * This class provides support for weak references. Weak references are most often used to implement canonicalizing mappings. Suppose that the garbage collector determines at a certain point in time that an object is weakly reachable. At that time it will atomically clear all the weak references to that object and all weak references to any other weakly- reachable objects from which that object is reachable through a chain of strong and weak references.
  * Since: JDK1.2, CLDC 1.1
  */
 public class WeakReference<T> extends java.lang.ref.Reference<T>{
-//    private long reference;
-    private Object reference;
+
+    private long ptr;
     
     /**
      * Creates a new weak reference that refers to the given object.
      */
     public WeakReference(T ref){
-        reference = ref;
-//         reference = create(ref);
+        this(ref, null);
     }
-
-//    private native long create(T ref);
-
-    @Override
-    public T get() {
-        return (T) reference;
+    
+    public WeakReference(T ref, ReferenceQueue<? super T> q){
+        init(ref);
     }
 
     @Override
-    public void clear() {
-        reference = null;
-    }
+    public native T get();
+
+    @Override
+    public native void clear();
 
     @Override
     public boolean refersTo(T o) {
-        return o == reference;
+        return o == get();
     }
 
-//    @Override
-//    protected native void finalize() throws Throwable;
+    private native void init(T ref);
+
+    @Override
+    protected native void finalize() throws Throwable;
 }

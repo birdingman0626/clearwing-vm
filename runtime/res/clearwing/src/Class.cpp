@@ -47,7 +47,7 @@ void M_java_lang_Class_ensureInitialized(jcontext ctx, jobject selfObj) {
         auto method = gcAllocEternal(ctx, &class_java_lang_reflect_Method);
         auto desc = (jobject) stringFromNativeEternal(ctx, methodData.desc);
         auto name = (jobject) stringFromNativeEternal(ctx, methodData.name);
-        init_java_lang_reflect_Method_long_java_lang_Class_java_lang_String_java_lang_String_int(ctx, method, methodData.offset, selfObj, desc, name, methodData.access);
+        init_java_lang_reflect_Method_long_long_java_lang_Class_java_lang_String_java_lang_String_int(ctx, method, methodData.address, methodData.offset, selfObj, desc, name, methodData.access);
         if (!strcmp("<init>", methodData.name)) {
             auto constructor = gcAllocEternal(ctx, &class_java_lang_reflect_Constructor);
             init_java_lang_reflect_Constructor_java_lang_reflect_Method(ctx, constructor, method);

@@ -117,9 +117,13 @@ public class Transpiler {
 			});
 	}
 
-	private static <T> Collection<Map.Entry<String, T>> filterByPattern(String expression, Collection<Map.Entry<String, T>> entries) {
+	private static Pattern compileQualifiedPattern(String expression) {
 		expression = expression.replace('.', '/').replace("$", "\\$").replace("**", "@").replace("*", "\\w*").replace("@", ".*");
-		Pattern pattern = Pattern.compile(expression);
+		return Pattern.compile(expression);
+	}
+	
+	private static <T> Collection<Map.Entry<String, T>> filterByPattern(String expression, Collection<Map.Entry<String, T>> entries) {
+		Pattern pattern = compileQualifiedPattern(expression);
 		return entries.stream().filter(entry -> pattern.matcher(entry.getKey()).matches()).collect(Collectors.toList());
 	}
 
@@ -323,6 +327,15 @@ public class Transpiler {
 			if (!found)
 				System.out.println("Warning: Failed to mark method as intrinsic for: '" + intrinsic + "'");
 			collect(clazz, required, classMap);
+		}
+		
+		// Mark JNI classes
+		for (String expression : config.getJniClasses()) {
+			Pattern pattern = compileQualifiedPattern(expression);
+			for (BytecodeClass c : classes) {
+				if (pattern.matcher(c.getOriginalName()).matches())
+					c.markJni();
+			}
 		}
 
 		// Find main class

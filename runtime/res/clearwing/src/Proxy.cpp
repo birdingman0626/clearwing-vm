@@ -8,8 +8,6 @@
 #include <map>
 #include <set>
 #include <vector>
-#include <string>
-#include <algorithm>
 
 #include <asmjit/x86.h>
 #include <asmjit/a64.h>
@@ -269,12 +267,12 @@ jobject SM_java_lang_reflect_Proxy_getProxyClass_java_lang_ClassLoader_Array1_ja
             }) != proxy->methods.end())
                 return;
             M_java_lang_reflect_Method_ensureSignatureInitialized(ctx, (jobject)method);
-            proxy->methods.emplace_back(name, index, desc, method->F_modifiers);
-            proxy->vtableEntries.emplace_back(name, desc);
             auto params = (jarray)method->F_parameterTypes;
             void *func = createProxyFunc((jclass *)params->data, params->length, (jclass)method->F_returnType, index);
             if (!func)
                 throwRuntimeException(ctx, "Failed to create function for proxy class");
+            proxy->methods.emplace_back(name, (intptr_t)func, index, desc, method->F_modifiers);
+            proxy->vtableEntries.emplace_back(name, desc);
             proxy->vtable.push_back(func);
         };
 
