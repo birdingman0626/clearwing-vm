@@ -399,7 +399,8 @@ public class BytecodeClass {
 		}
 
 		// Methods
-		for (BytecodeMethod method : methods) {
+		for (int m = 0; m < methods.size(); m++) {
+			BytecodeMethod method = methods.get(m);
 			if (usesJni() && method.isNative()) {
 				appendMethodDeclaration(builder, method);
 				builder.append(" {\n\t");
@@ -407,6 +408,7 @@ public class BytecodeClass {
 					builder.append("return ");
 				builder.append("invokeJni<").append(method.getSignature().getReturnType().getCppType()).append(">(ctx, ");
 				builder.append("\"").append(name).append(":").append(method.getOriginalName()).append("\", ");
+				builder.append("resolveJniMethod(ctx, &class_").append(qualifiedName).append(", ").append(m).append("), ");
 				if (method.isStatic())
 					builder.append("&class_").append(qualifiedName);
 				else

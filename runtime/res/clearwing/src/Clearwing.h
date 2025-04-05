@@ -204,6 +204,8 @@ jclass classForName(const char *name);
 bool isAssignableFrom(jcontext ctx, jclass type, jclass assignee);
 bool isInstance(jcontext ctx, jobject object, jclass type);
 void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject object);
+void *resolveJniMethod(jcontext ctx, jclass clazz, int methodIndex);
+
 jobject gcAlloc(jcontext ctx, jclass clazz);
 jobject gcAllocProtected(jcontext ctx, jclass clazz);
 jobject gcAllocEternal(jcontext ctx, jclass clazz);
@@ -962,6 +964,7 @@ void lockGuard(jcontext ctx, std::mutex &mutex, jframe frameRef, B block) {
 
 template<typename R, typename... Args>
 R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
+    if (!ptr) throwRuntimeException(ctx, "Native method not bound");
     FrameInfo frameInfo { method, 0 };
     jframe frame = pushStackFrame(ctx, &frameInfo, nullptr);
     jlong result;

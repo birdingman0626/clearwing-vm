@@ -25,6 +25,8 @@
 #include "java/lang/Boolean.h"
 #include "java/lang/Number.h"
 #include <java/nio/ByteBuffer.h>
+#include <java/lang/ref/WeakReference.h>
+#include <java/lang/reflect/Method.h>
 
 #include <ankerl/unordered_dense.h>
 
@@ -42,7 +44,6 @@
 #include <ranges>
 #include <chrono>
 #include <thread>
-#include <java/lang/ref/WeakReference.h>
 
 static_assert(sizeof(Class) == sizeof(java_lang_Class)); // Loosely ensure generated Class structure matches native representation
 static_assert(std::alignment_of<java_lang_Object>() == std::alignment_of<jlong>()); // Embedding Object in type struct should not add padding
@@ -383,6 +384,11 @@ void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject
         constructAndThrow<&class_java_lang_NoSuchMethodError, init_java_lang_NoSuchMethodError>(ctx);
 
     return ((void **) object->vtable)[offset];
+}
+
+void *resolveJniMethod(jcontext ctx, jclass clazz, int methodIndex) {
+    M_java_lang_Class_ensureInitialized(ctx, (jobject)clazz);
+    return (void *)((jmethod *)((jarray)clazz->methods)->data)[methodIndex]->F_address;
 }
 
 jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
