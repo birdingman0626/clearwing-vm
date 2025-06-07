@@ -8,6 +8,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <algorithm>
 
 #include <asmjit/x86.h>
 #include <asmjit/a64.h>
