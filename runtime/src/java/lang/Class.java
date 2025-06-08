@@ -463,6 +463,8 @@ public final class Class<T> implements java.lang.reflect.Type {
 
     public Method[] getDeclaredMethods() {
         ensureInitialized();
+        for (Method  method : methods)
+            method.getReturnType(); // Ensure signature is initialized
         return methods;
     }
 

@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 
 /**
  *
@@ -49,5 +50,22 @@ public class ThreadLocal<T> extends Object {
         Thread t = Thread.currentThread();
         _initialized.remove(t);
         value.remove(t);
+    }
+    
+    public static <T> ThreadLocal<T> withInitial(Supplier<T> supplier) {
+        return new Proxy<>(supplier);
+    }
+    
+    public static class Proxy<T> extends ThreadLocal<T> {
+        private final Supplier<T> supplier;
+        
+        public Proxy(Supplier<T> supplier) {
+            this.supplier = supplier;
+        }
+
+        @Override
+        protected T initialValue() {
+            return supplier.get();
+        }
     }
 }

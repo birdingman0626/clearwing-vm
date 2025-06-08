@@ -18,44 +18,9 @@
 #include <java/lang/VirtualMachineError.h>
 #include <java/lang/ref/WeakReference.h>
 
-using namespace std::string_view_literals;
-
-typedef jint jsize;
-typedef jbool jboolean;
-typedef jarray jbooleanArray;
-typedef jarray jbyteArray;
-typedef jarray jcharArray;
-typedef jarray jshortArray;
-typedef jarray jintArray;
-typedef jarray jlongArray;
-typedef jarray jfloatArray;
-typedef jarray jdoubleArray;
-typedef jarray jobjectArray;
-
-typedef union jvalue {
-   jboolean z;
-   jbyte b;
-   jchar c;
-   jshort s;
-   jint i;
-   jlong j;
-   jfloat f;
-   jdouble d;
-   jobject l;
-} jvalue;
-
-typedef jfield jfieldID;
-typedef jmethod jmethodID;
-
-typedef enum _jobjectType {
-   JNIInvalidRefType = 0,
-   JNILocalRefType = 1,
-   JNIGlobalRefType = 2,
-   JNIWeakGlobalRefType = 3
-} jobjectRefType;
-
-#define JNI_TYPES_ALREADY_DEFINED_IN_JNI_MD_H
 #include <jni.h>
+
+using namespace std::string_view_literals;
 
 typedef JNIEnv *jnienv;
 
@@ -186,8 +151,10 @@ static jmethod findMethod_(jcontext ctx, jclass clazz, std::string_view name, st
     for (int i = 0; i < methods->length; i++) {
         auto method = ((jmethod *)methods->data)[i];
         bool staticMethod = method->F_modifiers & 0x8;
-        if (stringToNative(ctx, (jstring)method->F_name) == name and stringToNative(ctx, (jstring)method->F_desc) == signature and staticMethod == isStatic)
+        if (stringToNative(ctx, (jstring)method->F_name) == name and stringToNative(ctx, (jstring)method->F_desc) == signature and staticMethod == isStatic) {
+            M_java_lang_reflect_Method_ensureSignatureInitialized(ctx, (jobject)method);
             return method;
+        }
     }
     for (int i = 0; i < clazz->interfaceCount; i++) {
         if (auto method = findMethod_(ctx, ((jclass *)clazz->nativeInterfaces)[i], name, signature, isStatic))
@@ -272,14 +239,14 @@ static T invokeMethod(jnienv env, jclass clazz, jobject self, jmethod method, co
     bool isSpecial = !isStatic and clazz;
     auto owner = (jclass) method->F_declaringClass;
     bool isInterface = owner->access & 0x200;
-    int argOffset = isStatic ? 2 : 1;
+    int argOffset = !isStatic ? 2 : 1;
     auto paramTypes = (jarray) method->F_parameterTypes;
 
     if (isStatic)
         ((static_init_ptr)((jclass)method->F_declaringClass)->staticInitializer)(ctx);
 
     argTypes[0] = &ffi_type_pointer;
-    argPtrs[0] = ctx;
+    argPtrs[0] = &ctx;
     if (!isStatic) {
         argTypes[1] = &ffi_type_pointer;
         argPtrs[1] = &self;
@@ -327,11 +294,9 @@ static T invokeMethod(jnienv env, jclass clazz, jobject self, jmethod method, co
 template<typename T>
 static T invokeMethod(jnienv env, jclass clazz, jobject self, jmethod method, va_list argList) {
     jvalue args[MAX_JNI_ARGS];
-    bool isStatic = !self;
-    int argOffset = isStatic ? 2 : 1;
     auto paramTypes = (jarray) method->F_parameterTypes;
     for (int i = 0; i < paramTypes->length; i++) {
-        jvalue &arg = args[argOffset + i];
+        jvalue &arg = args[i];
         jclass type = ((jclass *)paramTypes->data)[i];
         if (type == &class_boolean or type == &class_byte or type == &class_char or type == &class_short or type == &class_int)
             arg.i = va_arg(argList, int);
@@ -1627,6 +1592,10 @@ jni createJni(jcontext ctx) {
 }
 
 static int vmAttachThread(jvm, void **penv, void *args) {
+    if (jcontext ctx = getThreadContext()) {
+        *penv = ctx;
+        return JNI_OK;
+    }
     jcontext ctx = createContext();
     jthread thread{};
     tryCatch(ctx, "AttachCurrentThread", [&] {

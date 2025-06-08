@@ -402,13 +402,18 @@ public class BytecodeClass {
 		for (int m = 0; m < methods.size(); m++) {
 			BytecodeMethod method = methods.get(m);
 			if (usesJni() && method.isNative()) {
+				String jniName = "Java_" + qualifiedName + "_" + method.getOriginalName().replace("_", "_1");
+				builder.append("extern \"C\" ").append(method.getSignature().getReturnType().getCppType()).append(" ").append(jniName);
+				builder.append("(void *, void *");
+				for (int i = 0; i < method.getSignature().getParamTypes().length; i++)
+					builder.append(", ").append(method.getSignature().getParamTypes()[i].getCppType());
+				builder.append(");\n");
 				appendMethodDeclaration(builder, method);
 				builder.append(" {\n\t");
 				if (!method.getSignature().getReturnType().isVoid())
 					builder.append("return ");
 				builder.append("invokeJni<").append(method.getSignature().getReturnType().getCppType()).append(">(ctx, ");
-				builder.append("\"").append(name).append(":").append(method.getOriginalName()).append("\", ");
-				builder.append("resolveJniMethod(ctx, &class_").append(qualifiedName).append(", ").append(m).append("), ");
+				builder.append("\"").append(name).append(":").append(method.getOriginalName()).append("\", (void *)&").append(jniName).append(", ");
 				if (method.isStatic())
 					builder.append("&class_").append(qualifiedName);
 				else
@@ -594,7 +599,7 @@ public class BytecodeClass {
 					builder.append(", (intptr_t) &").append(field.getName());
 				else
 					builder.append(", offsetof(").append(qualifiedName).append(", ").append(field.getName()).append(")");
-				builder.append(", \"").append(field.getSignature() == null ? "" : field.getSignature()).append("\", ").append(field.getAccess()).append(" },\n");
+				builder.append(", \"").append(field.getDesc() == null ? "" : field.getDesc()).append("\", ").append(field.getAccess()).append(" },\n");
 			}
 			builder.append("};\n\n");
 		}
@@ -784,6 +789,7 @@ public class BytecodeClass {
 	}
 	
 	public void markJni() {
+		access |= Opcodes.ACC_NATIVE;
 		jni = true;
 	}
 	

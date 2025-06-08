@@ -29,6 +29,7 @@ package java.io;
 
 import java.net.URI;
 import java.net.URL;
+import java.nio.file.Path;
 import java.util.ArrayList;
 
 /**
@@ -275,6 +276,10 @@ public class File {
 	}
 
 	public URL toURL () {
+		return null;
+	}
+	
+	public Path toPath () {
 		return null;
 	}
 

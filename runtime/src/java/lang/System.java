@@ -64,10 +64,10 @@ public final class System {
      */
     public native static long currentTimeMillis();
 
-    public static void load(String lib) {
-    }
+    public static native void load(String lib);
 
     public static void loadLibrary(String lib) {
+        load(lib);
     }
 
     /**

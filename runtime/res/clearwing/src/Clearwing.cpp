@@ -386,11 +386,6 @@ void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject
     return ((void **) object->vtable)[offset];
 }
 
-void *resolveJniMethod(jcontext ctx, jclass clazz, int methodIndex) {
-    M_java_lang_Class_ensureInitialized(ctx, (jobject)clazz);
-    return (void *)((jmethod *)((jarray)clazz->methods)->data)[methodIndex]->F_address;
-}
-
 jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
     if (!objects) {
         objects = new ankerl::unordered_dense::set<jobject>;
@@ -779,6 +774,14 @@ int64_t getHeapUsage() {
 /// Adjust the heap usage stat by the given amount. Does not throw exceptions.
 void adjustHeapUsage(int64_t amount) {
     heapUsage += amount;
+}
+
+void initializeJniClasses(jcontext ctx) {
+    for (auto &pair : *classes) {
+        jclass cls = pair.second;
+        if (cls->access & 0x0100) // Check for NATIVE flag on class to detect JNI transpiler marking
+            ((static_init_ptr)cls->staticInitializer)(ctx);
+    }
 }
 
 // Acquires the global critical lock. Does not throw exceptions.

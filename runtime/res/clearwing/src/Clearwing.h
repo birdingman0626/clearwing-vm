@@ -80,6 +80,40 @@ typedef struct java_lang_ref_WeakReference *jweak;
 typedef struct java_lang_reflect_Method *jmethod;
 typedef struct java_lang_reflect_Field *jfield;
 
+typedef jint jsize;
+typedef jbool jboolean;
+typedef jarray jbooleanArray;
+typedef jarray jbyteArray;
+typedef jarray jcharArray;
+typedef jarray jshortArray;
+typedef jarray jintArray;
+typedef jarray jlongArray;
+typedef jarray jfloatArray;
+typedef jarray jdoubleArray;
+typedef jarray jobjectArray;
+
+typedef union jvalue {
+    jboolean z;
+    jbyte b;
+    jchar c;
+    jshort s;
+    jint i;
+    jlong j;
+    jfloat f;
+    jdouble d;
+    jobject l;
+} jvalue;
+
+typedef jfield jfieldID;
+typedef jmethod jmethodID;
+
+typedef enum _jobjectType {
+    JNIInvalidRefType = 0,
+    JNILocalRefType = 1,
+    JNIGlobalRefType = 2,
+    JNIWeakGlobalRefType = 3
+ } jobjectRefType;
+
 typedef void (*static_init_ptr)(jcontext ctx);
 typedef void (*init_annotations_ptr)(jcontext ctx);
 typedef void (*finalizer_ptr)(jcontext ctx, jobject self);
@@ -204,7 +238,6 @@ jclass classForName(const char *name);
 bool isAssignableFrom(jcontext ctx, jclass type, jclass assignee);
 bool isInstance(jcontext ctx, jobject object, jclass type);
 void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject object);
-void *resolveJniMethod(jcontext ctx, jclass clazz, int methodIndex);
 
 jobject gcAlloc(jcontext ctx, jclass clazz);
 jobject gcAllocProtected(jcontext ctx, jclass clazz);
@@ -247,6 +280,7 @@ void monitorOwnerCheck(jcontext ctx, jobject object);
 void interruptedCheck(jcontext ctx);
 int64_t getHeapUsage();
 void adjustHeapUsage(int64_t amount);
+void initializeJniClasses(jcontext ctx);
 
 NORETURN void throwException(jcontext ctx, jobject exception);
 NORETURN void throwDivisionByZero(jcontext ctx);

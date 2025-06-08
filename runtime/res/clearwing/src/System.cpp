@@ -57,4 +57,8 @@ jint SM_java_lang_System_identityHashCode_java_lang_Object_R_int(jcontext ctx, j
     return M_java_lang_Object_hashCode_R_int(ctx, obj);
 }
 
+void SM_java_lang_System_load_java_lang_String(jcontext ctx, jobject param0) {
+    initializeJniClasses(ctx);
+}
+
 }

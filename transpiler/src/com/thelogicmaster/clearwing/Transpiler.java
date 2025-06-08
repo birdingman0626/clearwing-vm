@@ -352,8 +352,8 @@ public class Transpiler {
 					break;
 				}
 		}
-		if (mainClass == null && inputs.size() > 0)
-			throw new TranspilerException("Failed to find main class");
+		if (mainClass == null)
+			System.out.println("Main class not found, omitting entrypoint");
 
 		// Collect required classes
 		for (String dep: NATIVE_DEPENDENCIES)
