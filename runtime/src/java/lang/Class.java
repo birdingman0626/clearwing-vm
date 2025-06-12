@@ -64,6 +64,7 @@ public final class Class<T> implements java.lang.reflect.Type {
     private boolean anonymous;
     private boolean synthetic;
     private long instanceOfCache;
+    private long interfaceCache;
 
     // Lazy-init fields start here
     private boolean initialized;
@@ -562,5 +563,11 @@ public final class Class<T> implements java.lang.reflect.Type {
 
     public Package getPackage() {
         return null;
+    }
+
+    @Override
+    protected void finalize() throws Throwable {
+        System.err.println("A Class was disposed! This should never happen.");
+        System.exit(-1);
     }
 }

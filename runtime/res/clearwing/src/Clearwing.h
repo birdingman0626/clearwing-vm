@@ -6,27 +6,37 @@
 #ifdef __cplusplus
 #include <cstdint>
 #include <csetjmp>
+#include <cassert>
 #define NORETURN [[noreturn]]
+#define CPP_UNLIKELY [[unlikely]]
+#define CPP_LIKELY [[likely]]
 #else
 #include <stdint.h>
 #include <setjmp.h>
 #include <stdnoreturn.h>
+#include <assert.h>
 #define NORETURN noreturn
 typedef uint8_t bool;
 typedef int64_t intptr_t;
 #define true 1
 #define false 0
+#define CPP_UNLIKELY
+#define CPP_LIKELY
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+#define assertm(cond, msg) assert((cond) || msg)
+
 #define GC_MARK_START 0
 #define GC_MARK_END 100
 #define GC_MARK_PROTECTED (-1)
 #define GC_MARK_ETERNAL (-2)
 #define GC_MARK_COLLECTED (-3)
+#define GC_MARK_FINALIZED (-4)
+#define GC_MARK_DESTROYED (-5)
 #define GC_DEPTH_ALWAYS (-1)
 
 #ifndef MAX_GC_MARK_DEPTH
@@ -45,7 +55,12 @@ extern "C" {
 
 // Max total memory before always collecting (Will run on every allocation past this threshold)
 #ifndef GC_HEAP_THRESHOLD
-#define GC_HEAP_THRESHOLD 2000000000
+#define GC_HEAP_THRESHOLD 2500000000
+#endif
+
+// Max total memory before OutOfMemory
+#ifndef GC_HEAP_OOM_THRESHOLD
+#define GC_HEAP_OOM_THRESHOLD 3000000000
 #endif
 
 #ifndef MAX_STACK_DEPTH
@@ -188,6 +203,7 @@ typedef struct Class {
     jbool anonymous;
     jbool synthetic;
     jlong instanceOfCache;
+    jlong interfaceCache;
     // Lazy-init fields start here
     jbool initialized;
     jref name;
@@ -205,7 +221,7 @@ typedef struct {
 } StringLiteral;
 
 typedef union {
-    jobject o;
+    volatile jobject o;
     jint i;
     jlong l;
     jfloat f;
@@ -237,7 +253,6 @@ bool registerClass(jclass clazz);
 jclass classForName(const char *name);
 bool isAssignableFrom(jcontext ctx, jclass type, jclass assignee);
 bool isInstance(jcontext ctx, jobject object, jclass type);
-void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject object);
 
 jobject gcAlloc(jcontext ctx, jclass clazz);
 jobject gcAllocProtected(jcontext ctx, jclass clazz);
@@ -289,6 +304,7 @@ NORETURN void throwNullPointer(jcontext ctx);
 NORETURN void throwStackOverflow(jcontext ctx);
 NORETURN void throwIndexOutOfBounds(jcontext ctx);
 NORETURN void throwIllegalArgument(jcontext ctx);
+NORETURN void throwNoSuchMethod(jcontext ctx);
 NORETURN void throwIOException(jcontext ctx, const char *message);
 NORETURN void throwRuntimeException(jcontext ctx, const char *message);
 
@@ -309,7 +325,7 @@ jfloat unboxFloat(jcontext ctx, jobject boxed);
 jdouble unboxDouble(jcontext ctx, jobject boxed);
 jbool unboxBoolean(jcontext ctx, jobject boxed);
 
-void instMultiANewArray(jcontext ctx, volatile jtype * &sp, jclass type, int dimensions);
+void instMultiANewArray(jcontext ctx, jtype * &sp, jclass type, int dimensions);
 jint floatCompare(jfloat value1, jfloat value2, jint nanValue);
 jint doubleCompare(jdouble value1, jdouble value2, jint nanValue);
 jint longCompare(jlong value1, jlong value2);
@@ -363,7 +379,7 @@ jint longCompare(jlong value1, jlong value2);
 
 // When calling this, all objects must be safely stored, either on a stack frame, a class/object field, or have the mark value set to one of the special constants
 #define SAFEPOINT() \
-    if (suspendVM)\
+    if (suspendVM) CPP_UNLIKELY\
         safepointSuspend(ctx)
 
 #define POP_N(count) \
@@ -902,7 +918,7 @@ struct ExceptionFrame {
 
 struct StackFrame {
     const FrameInfo *info{}; // Static information about frame
-    volatile jtype *frame{}; // Pointer to frame data
+    jtype *frame{}; // Pointer to frame data
     std::vector<ExceptionFrame> exceptionFrames; // Stack of current exception frames in the method
     int exceptionFrameDepth{};
     jobject monitor{}; // The monitor for synchronized methods
@@ -928,35 +944,47 @@ struct Context {
 /// Checks if an object is null. Throws exceptions.
 template<typename T>
 T *nullCheck(jcontext ctx, T *object) {
-    if (!object)
+    if (!object) CPP_UNLIKELY
         throwNullPointer(ctx);
     return object;
 }
 
+/// Resolves an interface in an object vtable. Method index must be an index into the method metadata array of this exact interface (Not a super class). Throws exceptions.
+inline void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject object) {
+    auto objectClass = NULL_CHECK((jclass) object->clazz);
+    auto cache = (std::unordered_map<jclass, std::vector<int>> *)objectClass->interfaceCache;
+    auto it = cache->find(interface);
+    if (it == cache->end()) CPP_UNLIKELY
+        throwNoSuchMethod(ctx);
+    int offset = method < (int)it->second.size() ? it->second[method] : -1;
+    if (offset < 0) CPP_UNLIKELY
+        throwNoSuchMethod(ctx);
+    return ((void **) object->vtable)[offset];
+}
+
 inline jobject checkCast(jcontext ctx, jclass type, jobject object) {
-    if (object && !isInstance(ctx, object, type))
+    if (object && !isInstance(ctx, object, type)) CPP_UNLIKELY
         throwClassCast(ctx);
     return object;
 }
 
 inline jarray arrayBoundsCheck(jcontext ctx, jarray array, int index) {
     nullCheck(ctx, (jobject)array);
-    if (index >= array->length)
+    if (index >= array->length) CPP_UNLIKELY
         throwIndexOutOfBounds(ctx);
     return array;
 }
 
-inline jframe pushStackFrame(jcontext ctx, const FrameInfo *info, volatile jtype *frame, jobject monitor = nullptr) {
+inline jframe pushStackFrame(jcontext ctx, const FrameInfo *info, jtype *frame, jobject monitor = nullptr) {
     SAFEPOINT();
     auto frameRef = &ctx->frames[ctx->stackDepth++];
-    if (frameRef->exceptionFrameDepth != 0) // Todo: Make debug assertion
-        throw std::runtime_error("Exception frame was not popped");
+    assertm(frameRef->exceptionFrameDepth == 0, "Exception frame was not popped");
     frameRef->frame = frame;
     frameRef->info = info;
     LINE_NUMBER(0);
-    if (ctx->stackDepth == MAX_STACK_DEPTH - 10)
+    if (ctx->stackDepth == MAX_STACK_DEPTH - 10) CPP_UNLIKELY
         throwStackOverflow(ctx);
-    if (monitor) {
+    if (monitor) CPP_UNLIKELY {
         frameRef->monitor = monitor;
         monitorEnter(ctx, monitor);
     }
@@ -965,11 +993,9 @@ inline jframe pushStackFrame(jcontext ctx, const FrameInfo *info, volatile jtype
 
 inline void popStackFrame(jcontext ctx, jobject monitor = nullptr) {
     SAFEPOINT();
-    if (ctx->stackDepth == 0)
-        throw std::runtime_error("No stack frame to pop");
-    if (ctx->frames[ctx->stackDepth - 1].exceptionFrameDepth != 0) // Todo: Make debug assertion
-        throw std::runtime_error("Exception frame was not popped");
-    if (monitor) {
+    assertm(ctx->stackDepth > 0, "No stack frame to pop");
+    assertm(ctx->frames[ctx->stackDepth - 1].exceptionFrameDepth == 0, "Exception frame was not popped");
+    if (monitor) CPP_UNLIKELY {
         monitorExit(ctx, monitor);
         ctx->frames[ctx->stackDepth - 1].monitor = nullptr;
     }
@@ -998,7 +1024,7 @@ void lockGuard(jcontext ctx, std::mutex &mutex, jframe frameRef, B block) {
 
 template<typename R, typename... Args>
 R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
-    if (!ptr) throwRuntimeException(ctx, "Native method not bound");
+    if (!ptr) CPP_UNLIKELY throwRuntimeException(ctx, "Native method not bound");
     FrameInfo frameInfo { method, 0 };
     jframe frame = pushStackFrame(ctx, &frameInfo, nullptr);
     jlong result;
@@ -1013,7 +1039,7 @@ R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
             *(R *)&result = func(ctx, args...);
     }, [&] {
         frame->localRefs.clear();
-        if (ctx->jniException)
+        if (ctx->jniException) CPP_UNLIKELY
             throwException(ctx, (jobject)ctx->jniException);
         // ctx->suspended = false; // Todo
         SAFEPOINT();
@@ -1089,7 +1115,7 @@ void tryCatch(jcontext ctx, const char *method, B block, jclass clazz, E except)
 
 template <typename B, typename E>
 void tryCatch(jframe frameRef, B block, jclass clazz, E except) requires std::invocable<B> and std::invocable<E, jobject> {
-    if (setjmp(*pushExceptionFrame(frameRef, clazz))) {
+    if (setjmp(*pushExceptionFrame(frameRef, clazz))) CPP_UNLIKELY {
         auto ex = popExceptionFrame(frameRef);
         protectObject(ex); // Doesn't cause a leak if exception is rethrow in except block, since it will be re-caught and fixed there
         except(ex);
@@ -1115,6 +1141,13 @@ jobject constructObject(jcontext ctx, P... params) {
     auto object = gcAllocProtected(ctx, T);
     C(ctx, object, params...);
     unprotectObject(object);
+    return object;
+}
+
+template <jclass T, auto C, typename ...P>
+jobject constructObjectProtected(jcontext ctx, P... params) {
+    auto object = gcAllocProtected(ctx, T);
+    C(ctx, object, params...);
     return object;
 }
 
@@ -1145,7 +1178,7 @@ inline jstring stringFromNative(jcontext ctx, const std::string_view &string) {
 
 template<typename T>
 jint floatingCompare(T t1, T t2, jint nanVal) {
-    if (std::isnan(t1) or std::isnan(t2))
+    if (std::isnan(t1) or std::isnan(t2)) CPP_UNLIKELY
         return nanVal;
     if (t1 > t2)
         return 1;

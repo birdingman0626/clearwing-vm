@@ -438,9 +438,9 @@ public class BytecodeClass {
 
 			int stackSize = method.getStackSize() + method.getLocalCount();
 			if (stackSize > 0) {
-				builder.append("\tvolatile jtype frame[").append(stackSize).append("];\n");
+				builder.append("\tjtype frame[").append(stackSize).append("];\n");
 				builder.append("\tauto stack = &frame[").append(method.getLocalCount()).append("];\n");
-				builder.append("\tvolatile jtype *sp = stack;\n");
+				builder.append("\tjtype *sp = stack;\n");
 			}
 			builder.append("\tFrameInfo frameInfo { ").append("\"").append(name).append(":")
 					.append(method.getOriginalName()).append("\", ").append(stackSize).append(" };\n");

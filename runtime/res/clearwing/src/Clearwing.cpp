@@ -185,9 +185,32 @@ bool registerClass(jclass clazz) {
             .vtable = (intptr_t) vtable_java_lang_Class,
             .monitor = (intptr_t) new ObjectMonitor,
     };
-    auto instanceCache = new std::set<jclass>;
+
+    auto instanceCache = new std::unordered_set<jclass>;
+    auto interfaceCache = new std::unordered_map<jclass, std::vector<int>>;
     std::function<void(jclass)> processClass;
     processClass = [&](jclass cls) {
+        if (cls != clazz && cls->access & 0x0200) { // ACC_INTERFACE
+            std::vector<int> offsets(cls->methodCount);
+            for (int i = 0; i < cls->methodCount; i++) {
+                auto &metadata = ((MethodMetadata *) cls->nativeMethods)[i];
+                if (metadata.access & 0x8) { // ACC_STATIC
+                    offsets[i] = -1;
+                    continue;
+                }
+                int found = -1;
+                for (int j = 0; j < clazz->vtableSize; j++) {
+                    auto entry = ((VtableEntry *) clazz->vtableEntries)[j];
+                    if (strcmp(entry.name, metadata.name) != 0 or strcmp(entry.desc, metadata.desc) != 0)
+                        continue;
+                    found = j;
+                    break;
+                }
+                offsets[i] = found;
+            }
+            (*interfaceCache)[cls] = std::move(offsets);
+        }
+
         instanceCache->emplace(cls);
         if (cls->parentClass)
             processClass((jclass)cls->parentClass);
@@ -196,6 +219,8 @@ bool registerClass(jclass clazz) {
     };
     processClass(clazz);
     clazz->instanceOfCache = (intptr_t) instanceCache;
+    clazz->interfaceCache = (intptr_t) interfaceCache;
+
     registryMutex->unlock();
     return true;
 }
@@ -209,7 +234,7 @@ jclass classForName(const char *name) {
     }
 }
 
-void instMultiANewArray(jcontext ctx, volatile jtype *&sp, jclass type, int dimensionCount) {
+void instMultiANewArray(jcontext ctx, jtype *&sp, jclass type, int dimensionCount) {
     std::vector<int> dimensions;
     for (int i = 0; i < dimensionCount; i++)
         dimensions.push_back((int)(--sp)->i);
@@ -329,7 +354,7 @@ bool isAssignableFrom(jcontext ctx, jclass type, jclass assignee) {
     if (type->arrayDimensions > 0 and assignee->arrayDimensions > 0)
         return isAssignableFrom(ctx, (jclass) type->componentClass, (jclass) assignee->componentClass);
 
-    return ((std::set<jclass> *)assignee->instanceOfCache)->contains(type);
+    return ((std::unordered_set<jclass> *)assignee->instanceOfCache)->contains(type);
 }
 
 /// Checks whether an object is an instance or inherits from a given type. Does not throw exceptions.
@@ -339,64 +364,28 @@ bool isInstance(jcontext ctx, jobject object, jclass type) {
     return isAssignableFrom(ctx, type, (jclass) object->clazz);
 }
 
-/// Resolves an interface in an object vtable. Method index must be an index into the method metadata array of this exact interface (Not a super class). Throws exceptions.
-void *resolveInterfaceMethod(jcontext ctx, jclass interface, int method, jobject object) {
-    NULL_CHECK(object);
-    static std::mutex lock;
-    static std::map<jclass, std::map<jclass, std::vector<int>>> mappings;
-
-    auto objectClass = (jclass) object->clazz;
-
-    int offset;
-    {
-        std::lock_guard guard(lock); // Todo: Making thread_local rather than locking is probably much faster
-
-        std::map<jclass, std::vector<int>> &objectMappings = mappings[interface];
-
-        auto offsetsIt = objectMappings.find(objectClass);
-        if (offsetsIt == objectMappings.end()) {
-            std::vector<int> offsets(interface->methodCount);
-            for (int i = 0; i < interface->methodCount; i++) {
-                auto &metadata = ((MethodMetadata *) interface->nativeMethods)[i];
-                if (metadata.access & 0x8) { // ACC_STATIC
-                    offsets[i] = -1;
-                    continue;
-                }
-                int found = -1;
-                for (int j = 0; j < objectClass->vtableSize; j++) {
-                    auto entry = ((VtableEntry *) objectClass->vtableEntries)[j];
-                    if (strcmp(entry.name, metadata.name) != 0 or strcmp(entry.desc, metadata.desc) != 0)
-                        continue;
-                    found = j;
-                    break;
-                }
-                offsets[i] = found;
-            }
-            objectMappings[objectClass] = offsets;
-            offset = offsets[method];
-        } else {
-            auto &offsets = offsetsIt->second;
-            offset = (int)offsets.size() <= method ? -1 : offsets[method];
-        }
-    }
-
-    if (offset == -1)
-        constructAndThrow<&class_java_lang_NoSuchMethodError, init_java_lang_NoSuchMethodError>(ctx);
-
-    return ((void **) object->vtable)[offset];
-}
-
 jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
-    if (!objects) {
+    thread_local bool outOfMem;
+
+    if (!objects) CPP_UNLIKELY {
         objects = new ankerl::unordered_dense::set<jobject>;
         rootObjects = new ankerl::unordered_dense::set<jobject>;
     }
 
-    if (heapUsage > GC_HEAP_THRESHOLD || heapUsage - lastCollectionHeapUsage > GC_MEM_THRESHOLD || allocationsSinceCollection > GC_OBJECT_THRESHOLD)
+    // Note: Running the GC every allocation is very useful for identifying reachability bugs
+
+    if (heapUsage > GC_HEAP_THRESHOLD || heapUsage - lastCollectionHeapUsage > GC_MEM_THRESHOLD || allocationsSinceCollection > GC_OBJECT_THRESHOLD) CPP_UNLIKELY
         runGC(ctx);
 
-    if (heapUsage > GC_HEAP_THRESHOLD)
-        constructAndThrow<&class_java_lang_OutOfMemoryError, init_java_lang_OutOfMemoryError>(ctx);
+    if (heapUsage > GC_HEAP_OOM_THRESHOLD && !outOfMem) CPP_UNLIKELY
+    {
+        outOfMem = true;
+        tryFinally(ctx, "throwOOM", [&] {
+            constructAndThrow<&class_java_lang_OutOfMemoryError, init_java_lang_OutOfMemoryError>(ctx);
+        }, [&] {
+            outOfMem = false;
+        });
+    }
 
     auto object = (jobject) new char[clazz->size]{};
     heapUsage += clazz->size + (int64_t) sizeof(ObjectMonitor);
@@ -410,7 +399,7 @@ jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
     };
 
     objectsLock.lock();
-    if (mark == GC_MARK_START)
+    if (mark == GC_MARK_START) CPP_LIKELY
         objects->emplace(object);
     else
         rootObjects->emplace(object);
@@ -527,6 +516,7 @@ static void collectionThreadFunc(jcontext ctx) {
             if (!collectedObjects.empty()) {
                 collected = collectedObjects;
                 collectedObjects.clear();
+                assert(collected[0]->vtable > 10);
             }
             objectsLock.unlock();
 
@@ -535,6 +525,7 @@ static void collectionThreadFunc(jcontext ctx) {
                     tryCatch(frameRef, [&]{
                         ((finalizer_ptr)((void **)obj->vtable)[VTABLE_java_lang_Object_finalize])(ctx, obj);
                     }, &class_java_lang_Throwable, [](jobject ignored){});
+                    obj->gcMark = GC_MARK_FINALIZED;
                 }
 
                 for (jobject obj : collected) {
@@ -547,7 +538,10 @@ static void collectionThreadFunc(jcontext ctx) {
                     delete (ObjectMonitor *) obj->monitor;
 
                     memset(obj, 0, sizeof(java_lang_Object)); // Erase collected objects to make memory bugs easier to catch
-                    obj->gcMark = GC_MARK_COLLECTED; // Set collected flag again
+                    obj->gcMark = GC_MARK_DESTROYED;
+                    obj->clazz = 1;
+                    obj->vtable = 2;
+                    obj->monitor = 3;
 
                     delete[] (char *) obj;
                 }
@@ -601,6 +595,7 @@ void runGC(jcontext ctx) {
     auto copyTime = std::chrono::system_clock::now();
 
     acquireCriticalLock();
+    objectsLock.lock();
 
     static jint mark;
     if (++mark > GC_MARK_END)
@@ -665,8 +660,9 @@ void runGC(jcontext ctx) {
 
     // Collect unreachable objects
     for (jobject obj : *objects) {
-        if ((obj->gcMark > GC_MARK_COLLECTED && obj->gcMark < GC_MARK_START) || obj->gcMark == mark)
+        if (obj->gcMark < GC_MARK_START || obj->gcMark == mark)
             continue;
+        assert(obj->vtable > 10 && obj->gcMark <= GC_MARK_COLLECTED);
         obj->gcMark = GC_MARK_COLLECTED;
         collectedObjects.emplace_back(obj);
 
@@ -735,6 +731,7 @@ void runGC(jcontext ctx) {
 
     allocationsSinceCollection = 0;
 
+    objectsLock.unlock();
     releaseCriticalLock();
     {
         std::lock_guard lock(suspendMutex);
@@ -806,7 +803,7 @@ void safepointSuspend(jcontext ctx) {
 
 /// Pushes an exception frame onto the given stack frame. `type` can be null. Does not throw exceptions.
 jmp_buf *pushExceptionFrame(jframe frame, jclass type) {
-    if ((int)frame->exceptionFrames.size() < frame->exceptionFrameDepth + 1)
+    if ((int)frame->exceptionFrames.size() < frame->exceptionFrameDepth + 1) CPP_UNLIKELY
         frame->exceptionFrames.resize(frame->exceptionFrameDepth + 1);
     auto &exceptionFrame = frame->exceptionFrames[frame->exceptionFrameDepth++];
     exceptionFrame.type = type;
@@ -815,15 +812,13 @@ jmp_buf *pushExceptionFrame(jframe frame, jclass type) {
 
 /// Pops an exception frame then returns and clears the current exception. Does not throw exceptions.
 jobject popExceptionFrame(jframe frame) {
-    if (frame->exceptionFrameDepth == 0)
-        throw std::runtime_error("No exception frame to pop");
+    assertm(frame->exceptionFrameDepth > 0, "No exception frame to pop");
     frame->exceptionFrameDepth--;
     return clearCurrentException(frame);
 }
 
 void popExceptionFrames(jframe frame, int count) {
-    if (frame->exceptionFrameDepth < count)
-        throw std::runtime_error("No exception frame to pop");
+    assertm(frame->exceptionFrameDepth >= count, "No exception frame to pop");
     frame->exceptionFrameDepth -= count;
 }
 
@@ -879,13 +874,17 @@ void throwIllegalArgument(jcontext ctx) {
     constructAndThrow<&class_java_lang_IllegalArgumentException, init_java_lang_IllegalArgumentException>(ctx);
 }
 
+void throwNoSuchMethod(jcontext ctx) {
+    constructAndThrow<&class_java_lang_NoSuchMethodError, init_java_lang_NoSuchMethodError>(ctx);
+}
+
 void throwIOException(jcontext ctx, const char *message) {
     if (message)
         constructAndThrowMsg<&class_java_io_IOException, init_java_io_IOException_java_lang_String>(ctx, message);
     constructAndThrow<&class_java_io_IOException, init_java_io_IOException>(ctx);
 }
 
-NORETURN void throwRuntimeException(jcontext ctx, const char *message) {
+void throwRuntimeException(jcontext ctx, const char *message) {
     if (message)
         constructAndThrowMsg<&class_java_lang_RuntimeException, init_java_lang_RuntimeException_java_lang_String>(ctx, message);
     constructAndThrow<&class_java_lang_RuntimeException, init_java_lang_RuntimeException>(ctx);
@@ -899,7 +898,7 @@ void monitorEnter(jcontext ctx, jobject object) {
     // Race condition here is fine, fall back to slower/blocking acquire
     if (monitor->lock.try_lock()) {
         monitor->owner = ctx;
-        monitor->depth++;
+        ++monitor->depth;
         return;
     }
 
@@ -909,7 +908,7 @@ void monitorEnter(jcontext ctx, jobject object) {
 
     monitor->lock.lock();
     monitor->owner = ctx;
-    monitor->depth++;
+    ++monitor->depth;
 
     ctx->blockedBy = nullptr;
     ctx->suspended = false;
@@ -930,13 +929,13 @@ void monitorExit(jcontext ctx, jobject object) {
 /// Checks if the current thread owns a given monitor. Throws exceptions.
 void monitorOwnerCheck(jcontext ctx, jobject object) {
     auto monitor = (jmonitor) object->monitor;
-    if (!monitor->owner or monitor->owner != ctx)
+    if (!monitor->owner or monitor->owner != ctx) CPP_UNLIKELY
         constructAndThrow<&class_java_lang_IllegalMonitorStateException, init_java_lang_IllegalMonitorStateException>(ctx);
 }
 
 /// Checks if the current thread is interrupted. Throws exceptions.
 void interruptedCheck(jcontext ctx) {
-    if (ctx->thread->F_interrupted) {
+    if (ctx->thread->F_interrupted) CPP_UNLIKELY {
         ctx->thread->F_interrupted = false;
         constructAndThrow<&class_java_lang_InterruptedException, init_java_lang_InterruptedException>(ctx);
     }
@@ -975,13 +974,13 @@ jobject boxBoolean(jcontext ctx, jbool value) {
 }
 
 jbyte unboxByte(jcontext ctx, jobject boxed) {
-    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Byte)
+    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Byte) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Byte *) boxed)->F_value;
 }
 
 jchar unboxCharacter(jcontext ctx, jobject boxed) {
-    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Character)
+    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Character) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Character *) boxed)->F_value;
 }
@@ -989,7 +988,7 @@ jchar unboxCharacter(jcontext ctx, jobject boxed) {
 jshort unboxShort(jcontext ctx, jobject boxed) {
     if (NULL_CHECK(boxed)->clazz == (intptr_t) &class_java_lang_Byte)
         return unboxByte(ctx, boxed);
-    if (boxed->clazz != (intptr_t) &class_java_lang_Short)
+    if (boxed->clazz != (intptr_t) &class_java_lang_Short) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Short *) boxed)->F_value;
 }
@@ -999,7 +998,7 @@ jint unboxInteger(jcontext ctx, jobject boxed) {
         return unboxByte(ctx, boxed);
     if (boxed->clazz == (intptr_t) &class_java_lang_Short)
         return unboxShort(ctx, boxed);
-    if (boxed->clazz != (intptr_t) &class_java_lang_Integer)
+    if (boxed->clazz != (intptr_t) &class_java_lang_Integer) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Integer *) boxed)->F_value;
 }
@@ -1011,7 +1010,7 @@ jlong unboxLong(jcontext ctx, jobject boxed) {
         return unboxShort(ctx, boxed);
     if (boxed->clazz == (intptr_t) &class_java_lang_Integer)
         return unboxInteger(ctx, boxed);
-    if (boxed->clazz != (intptr_t) &class_java_lang_Long)
+    if (boxed->clazz != (intptr_t) &class_java_lang_Long) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Long *) boxed)->F_value;
 }
@@ -1022,8 +1021,8 @@ jfloat unboxFloat(jcontext ctx, jobject boxed) {
     if (boxed->clazz == (intptr_t) &class_java_lang_Short)
         return unboxShort(ctx, boxed);
     if (boxed->clazz == (intptr_t) &class_java_lang_Integer)
-        return unboxInteger(ctx, boxed);
-    if (boxed->clazz != (intptr_t) &class_java_lang_Float)
+        return (jfloat)unboxInteger(ctx, boxed);
+    if (boxed->clazz != (intptr_t) &class_java_lang_Float) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Float *) boxed)->F_value;
 }
@@ -1031,13 +1030,13 @@ jfloat unboxFloat(jcontext ctx, jobject boxed) {
 jdouble unboxDouble(jcontext ctx, jobject boxed) {
     if (isInstance(ctx, boxed, &class_java_lang_Number))
         return invokeVirtual<func_java_lang_Number_doubleValue_R_double, VTABLE_java_lang_Number_doubleValue_R_double>(ctx, boxed);
-    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Double)
+    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Double) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Double *) boxed)->F_value;
 }
 
 jbool unboxBoolean(jcontext ctx, jobject boxed) {
-    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Boolean)
+    if (NULL_CHECK(boxed)->clazz != (intptr_t) &class_java_lang_Boolean) CPP_UNLIKELY
         throwIllegalArgument(ctx);
     return ((java_lang_Boolean *) boxed)->F_value;
 }

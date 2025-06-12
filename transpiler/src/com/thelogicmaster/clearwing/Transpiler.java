@@ -130,7 +130,7 @@ public class Transpiler {
 	/**
 	 * Generates Cpp files from inlined jnigen style native methods
 	 */
-	private static void processSources(List<File> sourceDirs, File outputDir, List<String> ignorePatterns) throws IOException {
+	private static List<String> processSources(List<File> sourceDirs, File outputDir, List<String> ignorePatterns) throws IOException {
 		HashMap<String, Path> sourceMap = new HashMap<>();
 		for (File source: sourceDirs)
 			try (Stream<Path> stream = Files.find(source.toPath(), Integer.MAX_VALUE, (path, attr) -> attr.isRegularFile() && path.toString().endsWith(".java"))) {
@@ -147,6 +147,8 @@ public class Transpiler {
 				return "j" + type.asPrimitiveType().getType().name().toLowerCase().replaceAll("ean", "");
 			return "jobject";
 		};
+		
+		ArrayList<String> allIncludes = new ArrayList<>();
 
 		JavaMethodParser parser = new RobustJavaMethodParser();
 		for (Map.Entry<String, Path> entry: sources) {
@@ -227,7 +229,11 @@ public class Transpiler {
 			try (Writer writer = new BufferedWriter(new FileWriter(file))) {
 				writer.write(builder.toString());
 			}
+
+			allIncludes.addAll(includes);
 		}
+		
+		return allIncludes;
 	}
 
 	public static void transpile(List<File> inputs, List<File> sourceDirs, File outputDir, TranspilerConfig config) throws IOException {
@@ -365,6 +371,11 @@ public class Transpiler {
 		if (mainClass != null)
 			collect(mainClass, required, classMap);
 
+		// Generate natives from jnigen style comments
+		List<String> jniIncludes = processSources(sourceDirs, new File(outputDir, "src"), config.getSourceIgnores());
+		for (String include : jniIncludes)
+			collect(classMap.get(include), required, classMap);
+		
 		// Todo: Trim unused methods
 
 		// Write transpiled output
@@ -417,9 +428,6 @@ public class Transpiler {
 					"#ifndef USE_PLATFORM_OVERRIDE\n#define USE_PLATFORM_OVERRIDE " + config.hasPlatformOverride() + "\n#endif\n\n"
 			);
 		}
-
-		// Generate natives from jnigen style comments
-		processSources(sourceDirs, new File(outputDir, "src"), config.getSourceIgnores());
 
 		// Copy resources to output
 		copyResources("clearwing/src/", "clearwing/", outputDir);

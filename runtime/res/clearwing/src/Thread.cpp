@@ -98,7 +98,7 @@ void M_java_lang_Thread_finalize(jcontext ctx, jobject selfObj) {
 
 jobject M_java_lang_Thread_getStackTrace_R_Array1_java_lang_StackTraceElement(jcontext ctx, jobject self) {
     jtype frame[4];
-    FrameInfo frameInfo { "java/lang/Thread:getStackTrace", 1 };
+    FrameInfo frameInfo { "java/lang/Thread:getStackTrace", sizeof(frame) / sizeof(jtype) };
     auto frameRef = pushStackFrame(ctx, &frameInfo, frame);
 
     jarray trace = createArray(ctx, &class_java_lang_StackTraceElement, ctx->stackDepth);
