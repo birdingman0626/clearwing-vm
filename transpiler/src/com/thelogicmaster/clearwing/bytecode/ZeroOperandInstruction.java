@@ -73,12 +73,6 @@ public class ZeroOperandInstruction extends Instruction {
                 appendStandardInstruction(builder, Objects.requireNonNull(getOpcodeName()));
                 break;
             case Opcodes.IRETURN, Opcodes.LRETURN, Opcodes.FRETURN, Opcodes.DRETURN, Opcodes.ARETURN, Opcodes.RETURN:
-                if (!method.isSynchronized())
-                    builder.append("\tpopStackFrame(ctx);\n");
-                else if (method.isStatic())
-                    builder.append("\tpopStackFrame(ctx, (jobject) &class_").append(method.getOwner().getQualifiedName()).append(");\n");
-                else
-                    builder.append("\tpopStackFrame(ctx, self);\n");
                 appendStandardInstruction(builder, Objects.requireNonNull(getOpcodeName()));
                 break;
             case Opcodes.ATHROW:
@@ -199,12 +193,6 @@ public class ZeroOperandInstruction extends Instruction {
                 appendThrowReturn(builder);
             }
             case Opcodes.IRETURN, Opcodes.LRETURN, Opcodes.FRETURN, Opcodes.DRETURN, Opcodes.ARETURN, Opcodes.RETURN -> {
-                if (!method.isSynchronized())
-                    builder.append("\tpopStackFrame(ctx);\n");
-                else if (method.isStatic())
-                    builder.append("\tpopStackFrame(ctx, (jobject) &class_").append(method.getOwner().getQualifiedName()).append(");\n");
-                else
-                    builder.append("\tpopStackFrame(ctx, self);\n");
                 if (opcode == Opcodes.RETURN)
                     builder.append("\treturn;\n");
                 else

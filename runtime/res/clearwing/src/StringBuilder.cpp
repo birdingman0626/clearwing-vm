@@ -19,10 +19,9 @@ jobject M_java_lang_StringBuilder_append_java_lang_Object_R_java_lang_StringBuil
     else {
         jtype frame[1];
         FrameInfo frameInfo { "java/lang/StringBuilder:append", 1 };
-        pushStackFrame(ctx, &frameInfo, frame);
+        FrameGuard frameRef{ ctx, &frameInfo, frame };
         frame[0].o = invokeVirtual<func_java_lang_Object_toString_R_java_lang_String, VTABLE_java_lang_Object_toString_R_java_lang_String>(ctx, object);
         M_java_lang_StringBuilder_append_java_lang_String_R_java_lang_StringBuilder(ctx, self, frame[0].o);
-        popStackFrame(ctx);
     }
     return self;
 }

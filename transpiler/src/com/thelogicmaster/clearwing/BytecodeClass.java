@@ -467,15 +467,17 @@ public class BytecodeClass {
 					.append(", ").append(method.getExceptionFrames().size()).append(", ").append(method.getExceptionFrames().isEmpty() ? "nullptr" : "exceptionScopes")
 					.append(" };\n");
 			
-			builder.append("\tauto frameRef = pushStackFrame(ctx, &frameInfo, ")
-					.append(stackSize > 0 ? "frame" : "nullptr").append(", ");
-			if (!method.isSynchronized())
-				builder.append("nullptr");
-			else if (method.isStatic())
-				builder.append("(jobject) &class_").append(qualifiedName);
-			else
-				builder.append("self");
-			builder.append(");\n");
+			builder.append("\tFrameGuard frameRef{ ctx, &frameInfo, ")
+					.append(stackSize > 0 ? "frame" : "nullptr").append(" };\n");
+
+			if (method.isSynchronized()) {
+				builder.append("\tMonitorGuard monitorGuard{ ctx, ");
+				if (method.isStatic())
+					builder.append("(jobject) &class_").append(qualifiedName);
+				else
+					builder.append("self");
+				builder.append(" };\n");
+			}
 			
 			builder.append("\n");
 
@@ -484,7 +486,7 @@ public class BytecodeClass {
 				builder.append("\tclinit_").append(qualifiedName).append("(ctx);\n");
 
 			if (!method.getExceptionFrames().isEmpty()) {
-				builder.append("\tEXCEPTION_FRAME(\n");
+				builder.append("\n\tMETHOD_EXCEPTION_HANDLING_START(\n");
 				for (int i = 0; i < method.getExceptionFrames().size(); i++) {
 					BytecodeMethod.ExceptionFrame frame = method.getExceptionFrames().get(i);
 					builder.append("\t\tcase ").append(i + 1).append(": goto label_").append(frame.getHandlerLabel()).append(";\n");
@@ -506,8 +508,10 @@ public class BytecodeClass {
 
 			for (Instruction instruction : method.getInstructions())
 				instruction.appendUnoptimized(builder, config);
-
-			builder.append("\n\tpopStackFrame(ctx);\n"); // Todo: This can probably be removed
+			
+			if (!method.getExceptionFrames().isEmpty())
+				builder.append("\n\tMETHOD_EXCEPTION_HANDLING_END();\n");
+			
 			builder.append("}\n\n");
 		}
 

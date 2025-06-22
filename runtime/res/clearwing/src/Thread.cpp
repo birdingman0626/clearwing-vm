@@ -17,12 +17,12 @@ void threadEntrypoint(jcontext ctx, jthread thread) {
     try {
         jtype frame[1];
         FrameInfo frameInfo { "java/lang/Thread:threadEntrypoint", 1 };
-        auto frameRef = pushStackFrame(ctx, &frameInfo, frame);
+        FrameGuard frameRef{ ctx, &frameInfo, frame };
 
         thread->F_started = true;
         thread->F_alive = true;
 
-        tryCatch(ctx, "java/lang/Thread:threadEntrypointTry", [&]{
+        tryCatch(ctx, [&]{
             if (thread->F_entrypoint) {
                 frame[0].o = (jobject) createArray(ctx, &class_java_lang_String, 0);
                 ((main_ptr) thread->F_entrypoint)(ctx, frame[0].o);
@@ -31,15 +31,13 @@ void threadEntrypoint(jcontext ctx, jthread thread) {
                 invokeVirtual<func_java_lang_Thread_run, VTABLE_java_lang_Thread_run>(ctx, (jobject)thread);
         }, &class_java_lang_Throwable, [&](jobject ex){
             // Todo: Default handlers
-            tryCatch(ctx, "java/lang/Thread:threadEntrypointUncaughtException", [&] {
+            tryCatch(ctx, [&] {
                 auto throwable = (java_lang_Throwable *)ex;
                 if (throwable->F_message)
                     printf("Uncaught Exception: %s\n", stringToNative(ctx, (jstring)throwable->F_message));
                 INVOKE_VIRTUAL(java_lang_Throwable_printStackTrace, ex);
             }, &class_java_lang_Throwable, [&](jobject) {});
         });
-
-        popStackFrame(ctx);
     } catch (ExitException &) { }
 
     thread->F_alive = false;
@@ -99,7 +97,7 @@ void M_java_lang_Thread_finalize(jcontext ctx, jobject selfObj) {
 jobject M_java_lang_Thread_getStackTrace_R_Array1_java_lang_StackTraceElement(jcontext ctx, jobject self) {
     jtype frame[4];
     FrameInfo frameInfo { "java/lang/Thread:getStackTrace", sizeof(frame) / sizeof(jtype) };
-    auto frameRef = pushStackFrame(ctx, &frameInfo, frame);
+    FrameGuard frameRef{ ctx, &frameInfo, frame };
 
     jarray trace = createArray(ctx, &class_java_lang_StackTraceElement, ctx->stackDepth);
     frame[0].o = (jobject)trace;
@@ -115,8 +113,6 @@ jobject M_java_lang_Thread_getStackTrace_R_Array1_java_lang_StackTraceElement(jc
         int lineNumber = stackFrame->location >= 0 && stackFrame->location < info->locationCount ? info->locations[stackFrame->location].lineNumber : -1;
         ((jobject *)trace->data)[ctx->stackDepth - 1 - i] = constructObject<&class_java_lang_StackTraceElement, init_java_lang_StackTraceElement_java_lang_String_java_lang_String_java_lang_String_int>(ctx, frame[1].o, frame[2].o, frame[3].o, lineNumber);
     }
-
-    popStackFrame(ctx);
     return frame[0].o;
 }
 

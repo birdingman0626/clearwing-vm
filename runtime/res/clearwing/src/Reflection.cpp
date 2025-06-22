@@ -177,7 +177,7 @@ jobject M_java_lang_reflect_Method_invoke_java_lang_Object_Array1_java_lang_Obje
 
     jtype returnValue;
     ffi_status result;
-    tryCatch(ctx, "java/lang/Method:invoke", [&]{
+    tryCatch(ctx, [&]{
         void *func;
         if (isInterface)
             func = resolveInterfaceMethod(ctx, owner, (int) method->F_offset, object);

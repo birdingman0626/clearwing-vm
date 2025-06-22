@@ -28,10 +28,10 @@ typedef JNIEnv *jnienv;
 #define MAX_FFI_ARGS (MAX_JNI_ARGS + 2)
 
 template<typename B>
-static int jniTry(jnienv env, const char *name, B block) {
+static int jniTry(jnienv env, B block) {
     auto ctx = (jcontext)env;
     int result = JNI_OK;
-    tryCatch(ctx, name, [&] {
+    tryCatch(ctx, [&] {
         block(ctx);
     }, nullptr, [&](jobject e) {
         result = JNI_ERR;
@@ -41,10 +41,10 @@ static int jniTry(jnienv env, const char *name, B block) {
 }
 
 template<class T>
-static T jniTryOr(jnienv env, const char *name, const std::function<T(jcontext ctx)> &block, T defaultVal = {}) {
+static T jniTryOr(jnienv env, const std::function<T(jcontext ctx)> &block, T defaultVal = {}) {
     auto ctx = (jcontext)env;
     T result = defaultVal;
-    tryCatch(ctx, name, [&] {
+    tryCatch(ctx, [&] {
         result = block(ctx);
     }, nullptr, [&](jobject e) {
         ctx->jniException = (jthrowable)e;
@@ -86,7 +86,7 @@ static void deleteGlobalRef(jnienv env, jobject obj) {
 
 template<typename T>
 static jarray newArray(jnienv env, jclass clazz, int len, T defaultValue = {}) {
-    return jniTryOr<jarray>(env, "NewArrayJNI", [&](jcontext ctx) {
+    return jniTryOr<jarray>(env, [&](jcontext ctx) {
         jarray array = createArray(ctx, clazz, len);
         if (defaultValue) {
             for (int i = 0; i < len; i++)
@@ -98,7 +98,7 @@ static jarray newArray(jnienv env, jclass clazz, int len, T defaultValue = {}) {
 
 template<typename T>
 static T getArrayElement(jnienv env, jarray array, int index) {
-    return jniTryOr<T>(env, "GetArrayElementJNI", [&](jcontext ctx) {
+    return jniTryOr<T>(env, [&](jcontext ctx) {
         if (index < 0 or index >= array->length)
             throwIndexOutOfBounds(ctx);
         return ((T *)array->data)[index];
@@ -107,7 +107,7 @@ static T getArrayElement(jnienv env, jarray array, int index) {
 
 template<typename T>
 static void setArrayElement(jnienv env, jarray array, int index, T value) {
-    jniTry(env, "SetArrayElementJNI", [&](jcontext ctx) {
+    jniTry(env, [&](jcontext ctx) {
         if (index < 0 or index >= array->length)
             throwIndexOutOfBounds(ctx);
         ((T *)array->data)[index] = value;
@@ -128,7 +128,7 @@ static void releaseArrayElements(jnienv env, jarray array) {
 
 template<typename T>
 static void getArrayRegion(jnienv env, jarray array, T *buffer, int start, int len) {
-    jniTry(env, "GetArrayRegionJNI", [&](jcontext ctx) {
+    jniTry(env, [&](jcontext ctx) {
         if (start < 0 or len < 0 or start + len > array->length)
             throwIndexOutOfBounds(ctx);
         memcpy(buffer, (T *)array->data + start, len * sizeof(T));
@@ -137,7 +137,7 @@ static void getArrayRegion(jnienv env, jarray array, T *buffer, int start, int l
 
 template<typename T>
 static void setArrayRegion(jnienv env, jarray array, const T *buffer, int start, int len) {
-    jniTry(env, "SetArrayRegionJNI", [&](jcontext ctx) {
+    jniTry(env, [&](jcontext ctx) {
         if (start < 0 or len < 0 or start + len > array->length)
             throwIndexOutOfBounds(ctx);
         memcpy((T *)array->data + start, buffer, len * sizeof(T));
@@ -166,7 +166,7 @@ static jmethod findMethod_(jcontext ctx, jclass clazz, std::string_view name, st
 }
 
 static jmethod findMethod(jnienv env, jclass clazz, std::string_view name, std::string_view signature, bool isStatic) {
-    return jniTryOr<jmethod>(env, "FindMethodJNI", [&](jcontext ctx) {
+    return jniTryOr<jmethod>(env, [&](jcontext ctx) {
         if (jmethod method = findMethod_(ctx, clazz, name, signature, isStatic))
             return method;
         throwIllegalArgument(ctx); // Should be NoSuchMethodError
@@ -174,7 +174,7 @@ static jmethod findMethod(jnienv env, jclass clazz, std::string_view name, std::
 }
 
 static jfield findField(jnienv env, jclass clazz, std::string_view name, std::string_view signature, bool isStatic) {
-    return jniTryOr<jfield>(env, "FindFieldJNI", [&](jcontext ctx) {
+    return jniTryOr<jfield>(env, [&](jcontext ctx) {
         M_java_lang_Class_ensureInitialized(ctx, (jobject)clazz);
         auto fields = (jarray) clazz->fields;
         for (int i = 0; i < fields->length; i++) {
@@ -271,7 +271,7 @@ static T invokeMethod(jnienv env, jclass clazz, jobject self, jmethod method, co
     SAFEPOINT();
 
     jvalue returnValue{};
-    jniTry(env, "InvokeJNI", [&](jcontext) {
+    jniTry(env, [&](jcontext) {
         ffi_cif cif;
         if (ffi_prep_cif(&cif, FFI_DEFAULT_ABI, paramTypes->length + argOffset, getFfiType<T>(), argTypes) != FFI_OK)
             throw std::runtime_error("FFI CIF prep failed");
@@ -313,7 +313,7 @@ static T invokeMethod(jnienv env, jclass clazz, jobject self, jmethod method, va
 }
 
 static jobject vmNewObject(jnienv env, jclass clazz, jmethod method, const jvalue *args) {
-    auto obj = jniTryOr<jobject>(env, "NewObject", [&](jcontext ctx) {
+    auto obj = jniTryOr<jobject>(env, [&](jcontext ctx) {
         return gcAlloc(ctx, clazz);
     });
     if (!obj)
@@ -323,7 +323,7 @@ static jobject vmNewObject(jnienv env, jclass clazz, jmethod method, const jvalu
 }
 
 static jobject vmNewObject(jnienv env, jclass clazz, jmethod method, va_list args) {
-    auto obj = jniTryOr<jobject>(env, "NewObject", [&](jcontext ctx) {
+    auto obj = jniTryOr<jobject>(env, [&](jcontext ctx) {
         return gcAlloc(ctx, clazz);
     });
     if (!obj)
@@ -588,7 +588,7 @@ jni createJni(jcontext ctx) {
         },
 
         .DefineClass = [](jnienv env, [[maybe_unused]] const char *name, [[maybe_unused]] jobject loader, [[maybe_unused]] const jbyte *buf, [[maybe_unused]] jsize len) -> jclass {
-            jniTry(env, "DefineClass", [&](jcontext ctx) {
+            jniTry(env, [&](jcontext ctx) {
                 auto ex = gcAlloc(ctx, &class_java_lang_VirtualMachineError);
                 init_java_lang_VirtualMachineError_java_lang_String(ctx, ex, (jobject)createStringLiteral(ctx, u8"DefineClass not supported"_j));
                 ctx->jniException = (jthrowable)ex;
@@ -633,7 +633,7 @@ jni createJni(jcontext ctx) {
             auto ctx = (jcontext) env;
             jobject msgStr{};
             jobject obj{};
-            tryCatch(ctx, "JNI:ThrowNew", [&] {
+            tryCatch(ctx, [&] {
                 auto constructors = (jarray)clazz->constructors;
                 for (int i = 0; i < constructors->length; i++) {
                     auto constructor = ((java_lang_reflect_Constructor **)constructors->data)[i];
@@ -668,7 +668,7 @@ jni createJni(jcontext ctx) {
         },
 
         .ExceptionDescribe = [](jnienv env) -> void {
-            jniTry(env, "ExceptionDescribe", [&](jcontext ctx) {
+            jniTry(env, [&](jcontext ctx) {
                 if (jthrowable ex = ctx->jniException)
                     std::cerr << "JNI Exception: " << ex->F_message ? stringToNative(ctx, (jstring)ex->F_message) : (char *)((jclass) ex->parent.clazz)->nativeName;
             });
@@ -731,7 +731,7 @@ jni createJni(jcontext ctx) {
         },
 
         .AllocObject = [](jnienv env, jclass clazz) -> jobject {
-            return jniTryOr<jobject>(env, "AllocObject", [&](jcontext ctx) {
+            return jniTryOr<jobject>(env, [&](jcontext ctx) {
                 return gcAlloc(ctx, clazz);
             });
         },
@@ -1211,7 +1211,7 @@ jni createJni(jcontext ctx) {
         },
 
         .NewString = [](jnienv env, const jchar *unicode, jsize len) -> jstring {
-            return jniTryOr<jstring>(env, "NewString", [&](jcontext ctx) {
+            return jniTryOr<jstring>(env, [&](jcontext ctx) {
                 jobject str = gcAllocProtected(ctx, &class_java_lang_String);
                 jarray chars = createArrayProtected(ctx, &class_char, len);
                 memcpy(chars->data, unicode, len * sizeof(jchar));
@@ -1238,13 +1238,13 @@ jni createJni(jcontext ctx) {
         },
 
         .NewStringUTF = [](jnienv env, const char *utf) -> jstring {
-            return jniTryOr<jstring>(env, "NewStringUTF", [&](jcontext ctx) {
+            return jniTryOr<jstring>(env, [&](jcontext ctx) {
                 return stringFromNative(ctx, utf);
             });
         },
 
         .GetStringUTFLength = [](jnienv env, jstring str) -> jsize {
-            return jniTryOr<int>(env, "GetStringUTFLength", [&](jcontext ctx) {
+            return jniTryOr<int>(env, [&](jcontext ctx) {
                 return ((jarray)M_java_lang_String_getBytes_R_Array1_byte(ctx, (jobject)str))->length; // This is not ideal, but easy
             });
         },
@@ -1252,7 +1252,7 @@ jni createJni(jcontext ctx) {
         .GetStringUTFChars = [](jnienv env, jstring str, jboolean *isCopy) -> const char* {
             if (isCopy)
                 *isCopy = true;
-            return jniTryOr<const char *>(env, "GetStringUTFChars", [&](jcontext ctx) {
+            return jniTryOr<const char *>(env, [&](jcontext ctx) {
                 auto bytes = (jarray)M_java_lang_String_getBytes_R_Array1_byte(ctx, (jobject)str);
                 auto chars = new char[bytes->length + 1]{};
                 memcpy(chars, bytes->data, bytes->length);
@@ -1441,7 +1441,7 @@ jni createJni(jcontext ctx) {
         },
 
         .RegisterNatives = [](jnienv env, jclass clazz, const JNINativeMethod *methods, jint nMethods) -> jint {
-            return jniTry(env, "RegisterNatives", [&](jcontext ctx) {
+            return jniTry(env, [&](jcontext ctx) {
                 for (int i = 0; i < nMethods; i++) {
                     const JNINativeMethod &nativeMethod = methods[i];
                     std::string_view name{nativeMethod.name};
@@ -1470,13 +1470,13 @@ jni createJni(jcontext ctx) {
         },
 
         .MonitorEnter = [](jnienv env, jobject obj) -> jint {
-            return jniTry(env, "MonitorEnter", [&](jcontext ctx) {
+            return jniTry(env, [&](jcontext ctx) {
                 monitorEnter(ctx, obj);
             });
         },
 
         .MonitorExit = [](jnienv env, jobject obj) -> jint {
-            return jniTry(env, "MonitorEnter", [&](jcontext ctx) {
+            return jniTry(env, [&](jcontext ctx) {
                 monitorExit(ctx, obj);
             });
         },
@@ -1487,7 +1487,7 @@ jni createJni(jcontext ctx) {
         },
 
         .GetStringRegion = [](jnienv env, jstring str, jsize start, jsize len, jchar *buf) -> void {
-            jniTry(env, "GetStringRegion", [&](jcontext ctx) {
+            jniTry(env, [&](jcontext ctx) {
                 if (start < 0 or len < 0 or start + len > str->F_count)
                     throwIndexOutOfBounds(ctx);
                 memcpy(buf, (jchar *)((jarray)str->F_value)->data + start, len * sizeof(jchar));
@@ -1495,7 +1495,7 @@ jni createJni(jcontext ctx) {
         },
 
         .GetStringUTFRegion = [](jnienv env, jstring str, jsize start, jsize len, char *buf) -> void {
-            jniTry(env, "GetStringUTFRegion", [&](jcontext ctx) {
+            jniTry(env, [&](jcontext ctx) {
                 auto bytes = (jarray)M_java_lang_String_getBytes_R_Array1_byte(ctx, (jobject)str);
                 if (start < 0 or len < 0 or start + len > bytes->length)
                     throwIndexOutOfBounds(ctx);
@@ -1528,7 +1528,7 @@ jni createJni(jcontext ctx) {
         .NewWeakGlobalRef = [](jnienv env, jobject obj) -> jweak {
             if (!obj || (jclass)obj->clazz == &class_java_lang_ref_WeakReference)
                 return nullptr;
-            return jniTryOr<jweak>(env, "NewWeakGlobalRef", [&](jcontext ctx) {
+            return jniTryOr<jweak>(env, [&](jcontext ctx) {
                 auto weak = (jweak)gcAllocProtected(ctx, &class_java_lang_ref_WeakReference);
                 init_java_lang_ref_WeakReference_java_lang_Object(ctx, (jobject)weak, obj);
                 unprotectObject((jobject)weak);
@@ -1550,7 +1550,7 @@ jni createJni(jcontext ctx) {
             ctx->suspended = false;
             SAFEPOINT();
             jobject pixelBuffer{};
-            tryCatchFinally(ctx, "JNI:NewDirectByteBuffer", [&] {
+            tryCatchFinally(ctx, [&] {
                 pixelBuffer = gcAllocProtected(ctx, &class_java_nio_ByteBuffer);
                 init_java_nio_ByteBuffer_long_int_boolean(ctx, pixelBuffer, (jlong) address, (jint)capacity, false);
             }, nullptr, [&](jobject e) {
@@ -1598,7 +1598,7 @@ static int vmAttachThread(jvm, void **penv, void *args) {
     }
     jcontext ctx = createContext();
     jthread thread{};
-    tryCatch(ctx, "JNI:AttachCurrentThread", [&] {
+    tryCatch(ctx, [&] {
         thread = (jthread) gcAllocEternal(ctx, &class_java_lang_Thread);
         init_java_lang_Thread(ctx, (jobject)thread); // Todo: Support name arg
     }, nullptr, [&](jobject) {
@@ -1614,6 +1614,10 @@ static int vmAttachThread(jvm, void **penv, void *args) {
     thread->F_nativeContext = (jlong)ctx;
     ctx->thread = thread;
     attachThread(ctx);
+    static constexpr FrameInfo attachInfo{ "AttachThreadJNI" };
+    auto &frame = ctx->frames[ctx->stackDepth++];
+    frame = { .info = &attachInfo };
+    frame.localRefs.emplace_back();
     *penv = ctx;
     return JNI_OK;
 }

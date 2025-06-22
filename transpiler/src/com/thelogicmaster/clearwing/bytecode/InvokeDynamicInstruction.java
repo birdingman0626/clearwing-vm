@@ -165,7 +165,6 @@ public class InvokeDynamicInstruction extends Instruction {
                 builder.append(")");
             builder.append(");\n");
 
-            builder.append("\tpopStackFrame(ctx);\n");
             if (isConstructor || !proxyMethodSignature.getReturnType().isVoid())
                 builder.append("\treturn object;\n");
             else

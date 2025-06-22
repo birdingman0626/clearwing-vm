@@ -298,7 +298,7 @@ void acquireCriticalLock();
 void releaseCriticalLock();
 void safepointSuspend(jcontext ctx);
 
-jobject clearCurrentException(jframe frame);
+jobject clearCurrentException(jcontext ctx);
 
 void monitorEnter(jcontext ctx, jobject object);
 void monitorExit(jcontext ctx, jobject object);
@@ -309,6 +309,8 @@ void adjustHeapUsage(int64_t amount);
 void initializeJniClasses(jcontext ctx);
 
 NORETURN void throwException(jcontext ctx, jobject exception);
+int findExceptionHandler(jcontext ctx, int location, const FrameInfo *info);
+
 NORETURN void throwDivisionByZero(jcontext ctx);
 NORETURN void throwClassCast(jcontext ctx);
 NORETURN void throwNullPointer(jcontext ctx);
@@ -342,55 +344,6 @@ jint doubleCompare(jdouble value1, jdouble value2, jint nanValue);
 jint longCompare(jlong value1, jlong value2);
 
 #define SEMICOLON_RECEPTOR 0
-
-#define CONCAT_(a, b) CONCAT_INNER_(a, b)
-#define CONCAT_INNER_(a, b) a ## b
-#define ex_CATCH_ ,ex,
-#define CATCH(pair) ,pair##_CATCH_
-#define TRY_(block, type, name, except) \
-    if (setjmp(*pushExceptionFrame(frameRef, &class_##type))) \
-        goto CONCAT_(catch_target_, __LINE__); \
-    {block \
-    popExceptionFrame(frameRef); \
-    goto CONCAT_(catch_done_, __LINE__); \
-    CONCAT_(catch_target_, __LINE__): { \
-    jobject name = popExceptionFrame(frameRef); \
-    name->gcMark = GC_MARK_NATIVE; \
-    except \
-    name->gcMark = GC_MARK_START; } \
-    } CONCAT_(catch_done_, __LINE__):;
-#define TRY(args) TRY_(args)
-
-#define TRY_CATCH(block, type, name, except) \
-    if (setjmp(*pushExceptionFrame(frameRef, &class_##type))) { \
-        jobject name = popExceptionFrame(frameRef); \
-        name->gcMark = GC_MARK_NATIVE; \
-        except; \
-        name->gcMark = GC_MARK_START; \
-        goto CONCAT_(try_done_, __LINE__); \
-    } \
-    block; \
-    popExceptionFrame(frameRef); \
-    CONCAT_(try_done_, __LINE__):
-
-#define EXCEPTION_FRAME(handlers) \
-    int exceptionJump{}; \
-    while (true) { \
-        if (int result = setjmp(frameRef->landingPad); result != 0) { \
-            exceptionJump = result; \
-            continue; \
-        } \
-        if (exceptionJump != 0) { \
-            sp = stack; \
-            PUSH_OBJECT(clearCurrentException(frameRef)); \
-        } \
-        break; \
-    } \
-    switch (exceptionJump) { \
-        case 0: break; \
-        default: throw std::runtime_error("Invalid exception handler location"); \
-        handlers \
-    } SEMICOLON_RECEPTOR
 
 #define CONSTRUCT_OBJECT(clazz, constructor, ...) \
     ({ jobject object = gcAllocNative(ctx, clazz); \
@@ -930,9 +883,33 @@ using std::bit_cast;
 
 #define FRAME_LOCATION(loc) frameRef->location = loc
 
+#define METHOD_EXCEPTION_HANDLING_START(handlers) \
+    int exceptionHandlerIndex{}; \
+    exceptionHandlingTry: \
+    try { \
+    switch (exceptionHandlerIndex) { \
+        case 0: break; \
+        handlers \
+        default: throw std::runtime_error("Invalid exception handler"); \
+    } SEMICOLON_RECEPTOR
+
+#define METHOD_EXCEPTION_HANDLING_END() \
+    } catch (const JavaException &) { \
+        exceptionHandlerIndex = findExceptionHandler(ctx, frameRef->location, &frameInfo); \
+        if (exceptionHandlerIndex <= 0) throw; \
+        sp = stack; \
+        PUSH_OBJECT(clearCurrentException(ctx)); \
+        goto exceptionHandlingTry; \
+    } SEMICOLON_RECEPTOR
+
 class ExitException final : std::runtime_error {
 public:
     ExitException() : std::runtime_error("Exiting") { }
+};
+
+class JavaException final : std::runtime_error {
+public:
+    JavaException() : std::runtime_error("JavaException") { }
 };
 
 struct ObjectMonitor {
@@ -946,9 +923,7 @@ struct ObjectMonitor {
 struct StackFrame {
     const FrameInfo *info{}; // Static information about frame
     jtype *frame{}; // Pointer to frame data
-    jobject monitor{}; // The monitor for synchronized methods
     int location{}; // Current frame location index (or -1)
-    jobject exception{}; // The currently thrown exception
     jmp_buf landingPad{};
     std::vector<std::vector<jobject>> localRefs{}; // Local reference frames for JNI
 };
@@ -956,6 +931,7 @@ struct StackFrame {
 struct Context {
     jni jniEnv{}; // This must be the first field
     jthrowable jniException{};
+    jthrowable currentException{};
     jthread thread{};
     std::thread *nativeThread; // Null for main thread (Or JNI attached threads)
     StackFrame frames[MAX_STACK_DEPTH];
@@ -1001,53 +977,67 @@ inline jarray arrayBoundsCheck(jcontext ctx, jarray array, int index) {
     return array;
 }
 
-inline jframe pushStackFrame(jcontext ctx, const FrameInfo *info, jtype *frame, jobject monitor = nullptr) {
-    SAFEPOINT();
-    auto frameRef = &ctx->frames[ctx->stackDepth++];
-    assertm(frameRef->exceptionFrameDepth == 0, "Exception frame was not popped");
-    frameRef->frame = frame;
-    frameRef->info = info;
-    frameRef->location = -1;
-    if (ctx->stackDepth == MAX_STACK_DEPTH - 10) CPP_UNLIKELY
-        throwStackOverflow(ctx);
-    if (monitor) CPP_UNLIKELY {
-        frameRef->monitor = monitor;
+class FrameGuard {
+public:
+    FrameGuard(jcontext ctx, const FrameInfo *info, jtype *stack) : ctx(ctx) {
+        SAFEPOINT();
+        frame = &ctx->frames[ctx->stackDepth++];
+        frame->frame = stack;
+        frame->info = info;
+        frame->location = -1;
+        if (ctx->stackDepth == MAX_STACK_DEPTH - 10) CPP_UNLIKELY
+            throwStackOverflow(ctx);
+    }
+
+    ~FrameGuard() {
+        try {
+            SAFEPOINT();
+        } catch (const ExitException &) {}
+        assertm(ctx->stackDepth > 0, "No stack frame to pop");
+        ctx->stackDepth -= 1;
+    }
+
+    jframe operator->() const { return frame; }
+
+private:
+    jcontext ctx;
+    jframe frame;
+};
+
+class MonitorGuard {
+public:
+    MonitorGuard(jcontext ctx, jobject monitor) : ctx(ctx), monitor(monitor) {
         monitorEnter(ctx, monitor);
     }
-    return frameRef;
-}
 
-inline void popStackFrame(jcontext ctx, jobject monitor = nullptr) {
-    SAFEPOINT();
-    assertm(ctx->stackDepth > 0, "No stack frame to pop");
-    assertm(ctx->frames[ctx->stackDepth - 1].exceptionFrameDepth == 0, "Exception frame was not popped");
-    if (monitor) CPP_UNLIKELY {
+    ~MonitorGuard() {
         monitorExit(ctx, monitor);
-        ctx->frames[ctx->stackDepth - 1].monitor = nullptr;
     }
-    ctx->stackDepth -= 1;
-}
+
+private:
+    jcontext ctx;
+    jobject monitor;
+};
 
 template <typename B>
-void lockGuard(jcontext ctx, std::mutex &mutex, const char *method, B block) {
-    mutex.lock();
-    tryFinally(ctx, method, [&]{
+void lockGuard(jcontext ctx, jobject monitor, B block) {
+    monitorEnter(ctx, monitor);
+    tryFinally([&]{
         block();
     }, [&]{
-        mutex.unlock();
+        monitorExit(ctx, monitor);
     });
 }
 
 template<typename R, typename... Args>
 R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
-    if (!ptr) CPP_UNLIKELY throwRuntimeException(ctx, "Native method not bound");
     FrameLocation frameLocation{};
     FrameInfo frameInfo { method, 1, 1, &frameLocation, 0, nullptr };
     jtype stack[1];
-    jframe frame = pushStackFrame(ctx, &frameInfo, stack);
-    tryFinally(ctx, "invokeJni", [&] {
+    FrameGuard frameRef { ctx, &frameInfo, stack };
+    tryFinally([&] {
         ctx->jniException = nullptr;
-        ctx->frames[ctx->stackDepth - 1].localRefs.emplace_back();
+        frameRef->localRefs.emplace_back();
         // ctx->suspended = true; // Todo: Suspend when entering JNI? May be necessary, but makes memory bugs much more likely
         typedef R(* FuncPtr)(jcontext, Args...);
         auto func = (FuncPtr)ptr;
@@ -1056,13 +1046,12 @@ R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
         else
             *(volatile R *)&stack[0].l = func(ctx, args...);
     }, [&] {
-        ctx->frames[ctx->stackDepth - 1].localRefs.clear();
+        frameRef->localRefs.clear();
         if (ctx->jniException) CPP_UNLIKELY
             throwException(ctx, (jobject)ctx->jniException);
         // ctx->suspended = false; // Todo
         SAFEPOINT();
     });
-    popStackFrame(ctx);
     if constexpr (std::is_same_v<R, void>)
         return;
     else
@@ -1070,45 +1059,51 @@ R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
 }
 
 template <typename B, typename C, typename F>
-void tryCatchFinally(jcontext ctx, const char *method, B block, jclass clazz, C catchBlock, F finally) requires std::invocable<B> and std::invocable<C, jobject> and std::invocable<F> {
-    tryCatch(ctx, method, [&]{
+void tryCatchFinally(jcontext ctx, B block, jclass clazz, C except, F finally) requires std::invocable<B> and std::invocable<C, jobject> and std::invocable<F> {
+    ExceptionScope exceptionScope { 0, 0, clazz };
+    FrameLocation frameLocation{};
+    FrameInfo frameInfo { nullptr, 1, 1, &frameLocation, 1, &exceptionScope };
+    try {
         block();
-    }, clazz, [&](jobject ex){
-        tryFinally(ctx, method, [&]{
-            catchBlock(ex);
-        }, [&]{
+        finally();
+    } catch (const JavaException &) {
+        if (findExceptionHandler(ctx, 0, &frameInfo) == 0) {
             finally();
-        });
-    });
-    finally();
+            throw;
+        }
+        try {
+            except((jobject)ctx->currentException);
+            ctx->currentException = nullptr;
+        } catch (const JavaException &) {
+            finally();
+            throw;
+        }
+    }
 }
 
 template <typename B, typename F>
-void tryFinally(jcontext ctx, const char *method, B block, F finally) requires std::invocable<B> and std::invocable<F> {
-    tryCatch(ctx, method, [&]{
+void tryFinally(B block, F finally) requires std::invocable<B> and std::invocable<F> {
+    try {
         block();
-    }, nullptr, [&](jobject ex){
         finally();
-        throwException(ctx, ex);
-    });
-    finally();
+    } catch (const JavaException &) {
+        finally();
+        throw;
+    }
 }
 
 template <typename B, typename E>
-void tryCatch(jcontext ctx, const char *method, B block, jclass clazz, E except) requires std::invocable<B> and std::invocable<E, jobject> {
-    jtype frame[1];
+void tryCatch(jcontext ctx, B block, jclass clazz, E except) requires std::invocable<B> and std::invocable<E, jobject> {
     ExceptionScope exceptionScope { 0, 0, clazz };
     FrameLocation frameLocation{};
-    FrameInfo frameInfo { method, 1, 1, &frameLocation, 1, &exceptionScope };
-    auto frameRef = pushStackFrame(ctx, &frameInfo, frame);
-    if (setjmp(frameRef->landingPad)) CPP_UNLIKELY {
-        auto ex = clearCurrentException(frameRef);
-        frame->o = ex;
-        except(ex);
-        return;
+    FrameInfo frameInfo { nullptr, 1, 1, &frameLocation, 1, &exceptionScope };
+    try {
+        block();
+    } catch (const JavaException &) {
+        if (findExceptionHandler(ctx, 0, &frameInfo) == 0) throw;
+        except((jobject)ctx->currentException);
+        ctx->currentException = nullptr;
     }
-    block();
-    popStackFrame(ctx);
 }
 
 template <typename F, int I, typename ...P>

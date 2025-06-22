@@ -295,17 +295,16 @@ jstring createStringLiteral(jcontext ctx, StringLiteral literal) {
     static std::map<const char *, jstring> pool;
     static std::mutex lock;
     jstring value{};
-    lockGuard(ctx, lock, "VM:createStringLiteral", [&]{
-        auto it = pool.find(literal.string);
-        if (it != pool.end()) {
-            value = it->second;
-            return;
-        }
+    std::lock_guard guard{ lock };
+    auto it = pool.find(literal.string);
+    if (it != pool.end()) {
+        value = it->second;
+    } else {
         value = createString(ctx, literal.string, literal.length, false);
         makeEternal((jobject)value);
         makeEternal((jobject)value->F_value);
         pool[literal.string] = value;
-    });
+    }
     return value;
 }
 
@@ -324,7 +323,7 @@ jstring concatStringsRecipe(jcontext ctx, const char *recipe, int argCount, ...)
     va_start(args, argCount);
     volatile auto string = new std::string;
     jstring result{};
-    tryFinally(ctx, "VM:concatStringsRecipe", [&] {
+    tryFinally([&] {
         int term = 0;
         for (const char *it = recipe; *it; it++) {
             if (*it == 0x1 || *it == 0x2) {
@@ -380,7 +379,7 @@ jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
     if (heapUsage > GC_HEAP_OOM_THRESHOLD && !outOfMem) CPP_UNLIKELY
     {
         outOfMem = true;
-        tryFinally(ctx, "GC:throwOOM", [&] {
+        tryFinally([&] {
             constructAndThrow<&class_java_lang_OutOfMemoryError, init_java_lang_OutOfMemoryError>(ctx);
         }, [&] {
             outOfMem = false;
@@ -509,7 +508,7 @@ static void collectionThreadFunc(jcontext ctx) {
 
     try {
         FrameInfo frameInfo{ "GC:collect", 0 };
-        auto frameRef = pushStackFrame(ctx, &frameInfo, nullptr, nullptr);
+        FrameGuard frameRef{ ctx, &frameInfo, nullptr };
 
         while (true) { // Todo
             objectsLock.lock();
@@ -523,7 +522,7 @@ static void collectionThreadFunc(jcontext ctx) {
 
             if (!collected.empty()) {
                 for (jobject obj : collected) {
-                    tryCatch(ctx, "GC:finalizeObject", [&]{
+                    tryCatch(ctx, [&]{
                         ((finalizer_ptr)((void **)obj->vtable)[VTABLE_java_lang_Object_finalize])(ctx, obj);
                     }, &class_java_lang_Throwable, [](jobject ignored){});
                     obj->gcMark = GC_MARK_FINALIZED;
@@ -550,11 +549,11 @@ static void collectionThreadFunc(jcontext ctx) {
                 collected.clear();
             }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
             SAFEPOINT();
         }
-    } catch (ExitException &) { }
+    } catch (const ExitException &) { }
 
     ctx->dead = true;
     ctx->suspended = true;
@@ -569,7 +568,7 @@ void runGC(jcontext ctx) {
         return;
 
     FrameInfo frameInfo { "runGC", 0 };
-    auto frameRef = pushStackFrame(ctx, &frameInfo, nullptr);
+    FrameGuard frameRef{ ctx, &frameInfo, nullptr };
 
     auto blockTime = std::chrono::system_clock::now();
 
@@ -629,14 +628,14 @@ void runGC(jcontext ctx) {
         if (threadContext->jniException)
             ((gc_mark_ptr) ((jclass) threadContext->jniException->parent.clazz)->markFunction)((jobject)threadContext->jniException, mark, 0);
 
+        if (auto exception = (jobject)threadContext->currentException)
+            ((gc_mark_ptr) ((jclass) exception->clazz)->markFunction)(exception, mark, 0);
+
         for (auto global : threadContext->globalRefs)
             ((gc_mark_ptr) ((jclass) global->clazz)->markFunction)(global, mark, 0);
 
         for (int i = 0; i < threadContext->stackDepth; i++) {
             const auto &frame = threadContext->frames[i];
-
-            if (frame.exception)
-                ((gc_mark_ptr) ((jclass) frame.exception->clazz)->markFunction)(frame.exception, mark, 0);
 
             for (auto &localFrame : frame.localRefs)
                 for (auto local : localFrame)
@@ -761,8 +760,6 @@ void runGC(jcontext ctx) {
     lastCollectionHeapUsage = heapUsage;
 
     running = false;
-
-    popStackFrame(ctx, nullptr);
 }
 
 void markDeepObject(jobject obj) {
@@ -806,34 +803,29 @@ void safepointSuspend(jcontext ctx) {
     ctx->suspended = false;
 }
 
-jobject clearCurrentException(jframe frame) {
-    auto exception = frame->exception;
-    frame->exception = nullptr;
-    return exception;
+jobject clearCurrentException(jcontext ctx) {
+    auto exception = ctx->currentException;
+    ctx->currentException = nullptr;
+    return (jobject)exception;
 }
 
 /// Throws an exception. This function does not return.
 void throwException(jcontext ctx, jobject exception) {
-    while (ctx->stackDepth > 0) {
-        auto &frame = ctx->frames[ctx->stackDepth - 1];
-        auto info = frame.info;
-        for (int i = 0; i < info->exceptionScopeCount; i++) {
-            auto &scope = info->exceptionScopes[i];
-            if (frame.location < scope.startLocation || frame.location > scope.endLocation)
-                continue;
-            if (scope.type && !isInstance(ctx, exception, scope.type))
-                continue;
-            frame.exception = exception;
-            longjmp(frame.landingPad, i + 1);
-        }
-        if (frame.monitor) {
-            monitorExit(ctx, frame.monitor); // Todo: Stack overflows if this throws an exception
-            frame.monitor = nullptr;
-        }
-        ctx->stackDepth -= 1;
+    ctx->currentException = (jthrowable)exception;
+    throw JavaException();
+}
+
+int findExceptionHandler(jcontext ctx, int location, const FrameInfo *info) {
+    auto exception = (jobject)ctx->currentException;
+    for (int i = 0; i < info->exceptionScopeCount; i++) {
+        auto &scope = info->exceptionScopes[i];
+        if (location < scope.startLocation || location > scope.endLocation)
+            continue;
+        if (scope.type && !isInstance(ctx, exception, scope.type))
+            continue;
+        return i + 1;
     }
-    // Todo: Include exception details
-    throw std::runtime_error("Uncaught exception");
+    return 0;
 }
 
 void throwDivisionByZero(jcontext ctx) {
