@@ -11,41 +11,39 @@ import java.util.List;
  * A jump instruction, conditional or not
  */
 public class JumpInstruction extends Instruction implements JumpingInstruction {
-
-    private final int originalLabel;
-
-    private int bypass = -1;
-    private int label;
-    public int exceptionPops = 0;
+    private final int label;
 
     public JumpInstruction(BytecodeMethod method, int opcode, Label label) {
         super(method, opcode);
-        originalLabel = method.getLabelId(label);
-        this.label = originalLabel;
+        this.label = method.getLabelId(label);
+    }
+    
+    private void appendGoto(StringBuilder builder) {
+        builder.append("goto ").append(LABEL_PREFIX).append(label).append(";");
     }
 
     private void appendCompare(StringBuilder builder, TypeVariants type, String operation) {
         builder.append("\tsp -= 2; ");
         builder.append("if (sp[0].").append(type.getStackName()).append(" ").append(operation).append(" sp[1].").append(type.getStackName()).append(") ");
-        appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+        appendGoto(builder);
     }
 
     private void appendCompareZero(StringBuilder builder, TypeVariants type, String operation) {
         builder.append("\tif ((--sp)->").append(type.getStackName()).append(" ").append(operation).append(" ").append(type == TypeVariants.OBJECT ? "nullptr" : "0").append(") ");
-        appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+        appendGoto(builder);
     }
 
     // Todo: Ensure future stack optimizations don't break object comparisons (Only compare jobject base types)
     private void appendCompareOptimized(StringBuilder builder, TypeVariants type, String operation) {
         builder.append("\tif (").append(inputs.get(0).arg()).append(" ").append(operation);
         builder.append(" ").append(inputs.get(1).arg()).append(") ");
-        appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+        appendGoto(builder);
     }
 
     private void appendCompareZeroOptimized(StringBuilder builder, TypeVariants type, String operation) {
         builder.append("\tif (").append(inputs.get(0).arg()).append(" ").append(operation);
         builder.append(type == TypeVariants.OBJECT ? " nullptr" : " 0").append(") ");
-        appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+        appendGoto(builder);
     }
 
     @Override
@@ -69,7 +67,7 @@ public class JumpInstruction extends Instruction implements JumpingInstruction {
             case Opcodes.IF_ACMPNE -> appendCompare(builder, TypeVariants.OBJECT, "!=");
             case Opcodes.GOTO -> {
                 builder.append("\t");
-                appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+                appendGoto(builder);
             }
             default -> throw new TranspilerException("Invalid opcode");
         }
@@ -97,7 +95,7 @@ public class JumpInstruction extends Instruction implements JumpingInstruction {
             case Opcodes.IF_ACMPNE -> appendCompareOptimized(builder, TypeVariants.OBJECT, "!=");
             case Opcodes.GOTO -> {
                 builder.append("\t");
-                appendGoto(builder, bypass, label, originalLabel, exceptionPops);
+                appendGoto(builder);
             }
             default -> throw new TranspilerException("Invalid opcode");
         }
@@ -121,26 +119,7 @@ public class JumpInstruction extends Instruction implements JumpingInstruction {
     }
 
     @Override
-    public void setJumpBypass(int bypass, int label, int bypassLabel) {
-        this.bypass = bypass;
-        this.label = bypassLabel;
-    }
-
-    @Override
-    public void setJumpExceptionPops(int index, int pops) {
-        exceptionPops = pops;
-    }
-
-    public int getBypass() {
-        return bypass;
-    }
-
-    @Override
     public List<Integer> getJumpLabels() {
         return Collections.singletonList(label);
-    }
-
-    public int getOriginalLabel() {
-        return originalLabel;
     }
 }

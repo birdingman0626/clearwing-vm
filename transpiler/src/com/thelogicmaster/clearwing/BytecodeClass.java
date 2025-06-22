@@ -442,8 +442,31 @@ public class BytecodeClass {
 				builder.append("\tauto stack = &frame[").append(method.getLocalCount()).append("];\n");
 				builder.append("\tjtype *sp = stack;\n");
 			}
+			
+			if (!method.getLocations().isEmpty()) {
+				builder.append("\tstatic constexpr FrameLocation frameLocations[] { ");
+				for (int i = 0; i < method.getLocations().size(); i++) {
+					method.getLocations().get(i).build(builder);
+					builder.append(", ");
+				}
+				builder.append("};\n");
+			}
+
+			if (!method.getExceptionFrames().isEmpty()) {
+				builder.append("\tstatic constexpr ExceptionScope exceptionScopes[] { ");
+				for (int i = 0; i < method.getExceptionFrames().size(); i++) {
+					method.getExceptionFrames().get(i).build(builder);
+					builder.append(", ");
+				}
+				builder.append("};\n");
+			}
+			
 			builder.append("\tFrameInfo frameInfo { ").append("\"").append(name).append(":")
-					.append(method.getOriginalName()).append("\", ").append(stackSize).append(" };\n");
+					.append(method.getOriginalName()).append("\", ").append(stackSize)
+					.append(", ").append(method.getLocations().size()).append(", ").append(method.getLocations().isEmpty() ? "nullptr" : "frameLocations")
+					.append(", ").append(method.getExceptionFrames().size()).append(", ").append(method.getExceptionFrames().isEmpty() ? "nullptr" : "exceptionScopes")
+					.append(" };\n");
+			
 			builder.append("\tauto frameRef = pushStackFrame(ctx, &frameInfo, ")
 					.append(stackSize > 0 ? "frame" : "nullptr").append(", ");
 			if (!method.isSynchronized())
@@ -454,14 +477,21 @@ public class BytecodeClass {
 				builder.append("self");
 			builder.append(");\n");
 			
-			if (method.getTryCatchBypasses() > 0)
-				builder.append("\tvolatile bool bypasses[").append(method.getTryCatchBypasses()).append("]{};\n");
-			
 			builder.append("\n");
 
+			// Todo: Macros to check for class initialization before calling
 			if (method.isStatic() || method.isConstructor())
 				builder.append("\tclinit_").append(qualifiedName).append("(ctx);\n");
 
+			if (!method.getExceptionFrames().isEmpty()) {
+				builder.append("\tEXCEPTION_FRAME(\n");
+				for (int i = 0; i < method.getExceptionFrames().size(); i++) {
+					BytecodeMethod.ExceptionFrame frame = method.getExceptionFrames().get(i);
+					builder.append("\t\tcase ").append(i + 1).append(": goto label_").append(frame.getHandlerLabel()).append(";\n");
+				}
+				builder.append("\t);\n");
+			}
+			
 			// Set locals from parameters
 			if (method.getLocalCount() > 0) {
 				if (!method.isStatic())

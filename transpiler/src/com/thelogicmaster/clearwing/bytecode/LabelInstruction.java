@@ -13,6 +13,7 @@ import java.util.List;
 public class LabelInstruction extends Instruction {
 
 	private final int label;
+	private int location = -1;
 
 	public LabelInstruction (BytecodeMethod method, int label) {
 		super(method, -1);
@@ -26,10 +27,20 @@ public class LabelInstruction extends Instruction {
 	@Override
 	public void appendUnoptimized (StringBuilder builder, TranspilerConfig config) {
 		builder.append(LABEL_PREFIX).append(label).append(":;\n");
+		if (location >= 0 && !method.getExceptionFrames().isEmpty())
+			builder.append("\tFRAME_LOCATION(").append(location).append(");\n");
 	}
 
 	public int getLabel () {
 		return label;
+	}
+
+	public int getLocation() {
+		return location;
+	}
+
+	public void setLocation(int location) {
+		this.location = location;
 	}
 
 	@Override

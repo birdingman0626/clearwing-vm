@@ -3,6 +3,7 @@ package com.thelogicmaster.clearwing.bytecode;
 import com.thelogicmaster.clearwing.BytecodeMethod;
 import com.thelogicmaster.clearwing.StackEntry;
 import com.thelogicmaster.clearwing.TranspilerConfig;
+import com.thelogicmaster.clearwing.TranspilerException;
 import org.objectweb.asm.Label;
 
 import java.util.List;
@@ -14,6 +15,7 @@ public class LineNumberInstruction extends Instruction {
 
 	private final int line;
 	private final Label start;
+	private int location = -1;
 
 	public LineNumberInstruction (BytecodeMethod method, int line, Label start) {
 		super(method, -1);
@@ -23,7 +25,8 @@ public class LineNumberInstruction extends Instruction {
 
 	@Override
 	public void appendUnoptimized (StringBuilder builder, TranspilerConfig config) {
-		builder.append("\tLINE_NUMBER(").append(line).append(");\n");
+		if (location >= 0)
+			builder.append("\tLINE_NUMBER(").append(line).append(", ").append(location).append(");\n");
 	}
 
 	@Override
@@ -43,5 +46,13 @@ public class LineNumberInstruction extends Instruction {
 
 	public Label getStart () {
 		return start;
+	}
+
+	public int getLocation() {
+		return location;
+	}
+
+	public void setLocation(int location) {
+		this.location = location;
 	}
 }

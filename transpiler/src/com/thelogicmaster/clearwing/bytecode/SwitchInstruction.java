@@ -16,42 +16,28 @@ import java.util.List;
 public class SwitchInstruction extends Instruction implements JumpingInstruction {
 
 	private final int[] keys;
-	private final int[] originalLabels;
 	private final int[] labels;
-	private final int originalDefaultLabel;
-	private int defaultLabel;
-
-	private final int[] labelBypasses;
-	private int defaultLabelBypass = -1;
-	private final int[] exceptionPops;
-	private int defaultExceptionPops = 0;
+	private final int defaultLabel;
 
 	public SwitchInstruction (BytecodeMethod method, int[] keys, Label[] labels, Label defaultLabel) {
 		super(method, Opcodes.LOOKUPSWITCH);
 		this.keys = keys;
 		this.labels = new int[labels.length];
-		this.originalLabels = new int[labels.length];
-		for (int i = 0; i < labels.length; i++) {
+		for (int i = 0; i < labels.length; i++)
 			this.labels[i] = method.getLabelId(labels[i]);
-			this.originalLabels[i] = this.labels[i];
-		}
 		this.defaultLabel = method.getLabelId(defaultLabel);
-		this.originalDefaultLabel = this.defaultLabel;
-		labelBypasses = new int[labels.length];
-		Arrays.fill(labelBypasses, -1);
-		exceptionPops = new int[labels.length];
 	}
 
 	private void appendSwitch(StringBuilder builder, String value) {
 		builder.append("\t").append("switch(").append(value).append(") {\n");
 		for (int i = 0; i < keys.length; i++) {
 			builder.append("\t").append("\tcase ").append(keys[i]).append(": ");
-			appendGoto(builder, labelBypasses[i], labels[i], originalLabels[i], exceptionPops[i]);
+			builder.append("goto ").append(LABEL_PREFIX).append(labels[i]).append(";");
 			builder.append("\n");
 		}
 		if (defaultLabel != -1) {
 			builder.append("\t").append("\tdefault: ");
-			appendGoto(builder, defaultLabelBypass, defaultLabel, originalDefaultLabel, defaultExceptionPops);
+			builder.append("goto ").append(LABEL_PREFIX).append(defaultLabel).append(";");
 			builder.append("\n");
 		}
 		builder.append("\t").append("}\n");
@@ -82,37 +68,6 @@ public class SwitchInstruction extends Instruction implements JumpingInstruction
 
 	public int getDefaultLabel() {
 		return defaultLabel;
-	}
-
-	public int[] getOriginalLabels() {
-		return originalLabels;
-	}
-
-	public int getOriginalDefaultLabel() {
-		return originalDefaultLabel;
-	}
-
-	@Override
-	public void setJumpBypass(int bypass, int label, int bypassLabel) {
-		if (label == defaultLabel) {
-			defaultLabel = bypassLabel;
-			defaultLabelBypass = bypass;
-			return;
-		}
-		for (int i = 0; i < labels.length; i++)
-			if (label == labels[i]) {
-				labels[i] = bypassLabel;
-				labelBypasses[i] = bypass;
-				break;
-			}
-	}
-
-	@Override
-	public void setJumpExceptionPops(int index, int pops) {
-		if (index == labels.length)
-			defaultLabelBypass = pops;
-		else
-			exceptionPops[index] = pops;
 	}
 
 	@Override

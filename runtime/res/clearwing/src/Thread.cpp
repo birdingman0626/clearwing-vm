@@ -22,7 +22,7 @@ void threadEntrypoint(jcontext ctx, jthread thread) {
         thread->F_started = true;
         thread->F_alive = true;
 
-        tryCatch(frameRef, [&]{
+        tryCatch(ctx, "java/lang/Thread:threadEntrypointTry", [&]{
             if (thread->F_entrypoint) {
                 frame[0].o = (jobject) createArray(ctx, &class_java_lang_String, 0);
                 ((main_ptr) thread->F_entrypoint)(ctx, frame[0].o);
@@ -31,7 +31,7 @@ void threadEntrypoint(jcontext ctx, jthread thread) {
                 invokeVirtual<func_java_lang_Thread_run, VTABLE_java_lang_Thread_run>(ctx, (jobject)thread);
         }, &class_java_lang_Throwable, [&](jobject ex){
             // Todo: Default handlers
-            tryCatch(frameRef, [&] {
+            tryCatch(ctx, "java/lang/Thread:threadEntrypointUncaughtException", [&] {
                 auto throwable = (java_lang_Throwable *)ex;
                 if (throwable->F_message)
                     printf("Uncaught Exception: %s\n", stringToNative(ctx, (jstring)throwable->F_message));
@@ -106,12 +106,14 @@ jobject M_java_lang_Thread_getStackTrace_R_Array1_java_lang_StackTraceElement(jc
 
     for (int i = 0; i < ctx->stackDepth; i++) {
         auto stackFrame = &ctx->frames[i];
-        std::string_view method = stackFrame->info->method ? stackFrame->info->method : "";
+        auto info = stackFrame->info;
+        std::string_view method = info->method ? info->method : "";
         auto separator = method.find(':');
         frame[1].o = (jobject)stringFromNative(ctx, separator != std::string_view::npos ? method.substr(0, separator) : "Unknown");
         frame[2].o = (jobject)stringFromNative(ctx, separator != std::string_view::npos ? method.substr(separator + 1) : "unknown");
         frame[3].o = frame[1].o;
-        ((jobject *)trace->data)[ctx->stackDepth - 1 - i] = constructObject<&class_java_lang_StackTraceElement, init_java_lang_StackTraceElement_java_lang_String_java_lang_String_java_lang_String_int>(ctx, frame[1].o, frame[2].o, frame[3].o, stackFrame->lineNumber);
+        int lineNumber = stackFrame->location >= 0 && stackFrame->location < info->locationCount ? info->locations[stackFrame->location].lineNumber : -1;
+        ((jobject *)trace->data)[ctx->stackDepth - 1 - i] = constructObject<&class_java_lang_StackTraceElement, init_java_lang_StackTraceElement_java_lang_String_java_lang_String_java_lang_String_int>(ctx, frame[1].o, frame[2].o, frame[3].o, lineNumber);
     }
 
     popStackFrame(ctx);

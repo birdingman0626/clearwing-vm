@@ -177,9 +177,7 @@ jobject M_java_lang_reflect_Method_invoke_java_lang_Object_Array1_java_lang_Obje
 
     jtype returnValue;
     ffi_status result;
-    FrameInfo frameInfo { "java/lang/Method:invoke", 0 };
-    auto frameRef = pushStackFrame(ctx, &frameInfo, nullptr);
-    tryCatch(frameRef, [&]{
+    tryCatch(ctx, "java/lang/Method:invoke", [&]{
         void *func;
         if (isInterface)
             func = resolveInterfaceMethod(ctx, owner, (int) method->F_offset, object);
@@ -197,7 +195,6 @@ jobject M_java_lang_reflect_Method_invoke_java_lang_Object_Array1_java_lang_Obje
         delete[] args;
         constructAndThrow<&class_java_lang_reflect_InvocationTargetException, init_java_lang_reflect_InvocationTargetException_java_lang_Throwable>(ctx, ex);
     });
-    popStackFrame(ctx);
 
     delete[] argTypes;
     delete[] argValues;

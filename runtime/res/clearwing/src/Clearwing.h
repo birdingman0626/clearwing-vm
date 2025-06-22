@@ -156,9 +156,23 @@ typedef struct MethodMetadata {
     int access;
 } MethodMetadata;
 
+typedef struct FrameLocation {
+    int lineNumber;
+} FrameLocation;
+
+typedef struct ExceptionScope {
+    int startLocation;
+    int endLocation; // Inclusive
+    jclass type; // The exception to filter for, if any
+} ExceptionScope;
+
 typedef struct FrameInfo {
     const char *method; // Qualified method name
     int size; // Size of frame data (Number of jlong/StackEntry words)
+    int locationCount;
+    const FrameLocation *locations;
+    int exceptionScopeCount;
+    const ExceptionScope *exceptionScopes;
 } FrameInfo;
 
 typedef struct java_lang_Object {
@@ -284,9 +298,6 @@ void acquireCriticalLock();
 void releaseCriticalLock();
 void safepointSuspend(jcontext ctx);
 
-jmp_buf *pushExceptionFrame(jframe frame, jclass type);
-jobject popExceptionFrame(jframe frame);
-void popExceptionFrames(jframe frame, int count);
 jobject clearCurrentException(jframe frame);
 
 void monitorEnter(jcontext ctx, jobject object);
@@ -361,6 +372,25 @@ jint longCompare(jlong value1, jlong value2);
     block; \
     popExceptionFrame(frameRef); \
     CONCAT_(try_done_, __LINE__):
+
+#define EXCEPTION_FRAME(handlers) \
+    int exceptionJump{}; \
+    while (true) { \
+        if (int result = setjmp(frameRef->landingPad); result != 0) { \
+            exceptionJump = result; \
+            continue; \
+        } \
+        if (exceptionJump != 0) { \
+            sp = stack; \
+            PUSH_OBJECT(clearCurrentException(frameRef)); \
+        } \
+        break; \
+    } \
+    switch (exceptionJump) { \
+        case 0: break; \
+        default: throw std::runtime_error("Invalid exception handler location"); \
+        handlers \
+    } SEMICOLON_RECEPTOR
 
 #define CONSTRUCT_OBJECT(clazz, constructor, ...) \
     ({ jobject object = gcAllocNative(ctx, clazz); \
@@ -893,10 +923,12 @@ using std::bit_cast;
 #endif
 
 #ifdef USE_LINE_NUMBERS
-#define LINE_NUMBER(line) frameRef->lineNumber = line
+#define LINE_NUMBER(line, loc) frameRef->location = loc
 #else
-#define LINE_NUMBER(line) SEMICOLON_RECEPTOR
+#define LINE_NUMBER(line, loc) SEMICOLON_RECEPTOR
 #endif
+
+#define FRAME_LOCATION(loc) frameRef->location = loc
 
 class ExitException final : std::runtime_error {
 public:
@@ -911,19 +943,13 @@ struct ObjectMonitor {
     std::mutex conditionMutex;
 };
 
-struct ExceptionFrame {
-    jclass type;
-    jmp_buf landingPad;
-};
-
 struct StackFrame {
     const FrameInfo *info{}; // Static information about frame
     jtype *frame{}; // Pointer to frame data
-    std::vector<ExceptionFrame> exceptionFrames; // Stack of current exception frames in the method
-    int exceptionFrameDepth{};
     jobject monitor{}; // The monitor for synchronized methods
-    int lineNumber{}; // Current line number
+    int location{}; // Current frame location index (or -1)
     jobject exception{}; // The currently thrown exception
+    jmp_buf landingPad{};
     std::vector<std::vector<jobject>> localRefs{}; // Local reference frames for JNI
 };
 
@@ -981,7 +1007,7 @@ inline jframe pushStackFrame(jcontext ctx, const FrameInfo *info, jtype *frame, 
     assertm(frameRef->exceptionFrameDepth == 0, "Exception frame was not popped");
     frameRef->frame = frame;
     frameRef->info = info;
-    LINE_NUMBER(0);
+    frameRef->location = -1;
     if (ctx->stackDepth == MAX_STACK_DEPTH - 10) CPP_UNLIKELY
         throwStackOverflow(ctx);
     if (monitor) CPP_UNLIKELY {
@@ -1012,57 +1038,35 @@ void lockGuard(jcontext ctx, std::mutex &mutex, const char *method, B block) {
     });
 }
 
-template <typename B>
-void lockGuard(jcontext ctx, std::mutex &mutex, jframe frameRef, B block) {
-    mutex.lock();
-    tryFinally(ctx, frameRef, [&]{
-        block();
-    }, [&]{
-        mutex.unlock();
-    });
-}
-
 template<typename R, typename... Args>
 R invokeJni(jcontext ctx, const char *method, void *ptr, Args... args) {
     if (!ptr) CPP_UNLIKELY throwRuntimeException(ctx, "Native method not bound");
-    FrameInfo frameInfo { method, 0 };
-    jframe frame = pushStackFrame(ctx, &frameInfo, nullptr);
-    jlong result;
-    tryFinally(ctx, frame, [&] {
-        frame->localRefs.emplace_back();
+    FrameLocation frameLocation{};
+    FrameInfo frameInfo { method, 1, 1, &frameLocation, 0, nullptr };
+    jtype stack[1];
+    jframe frame = pushStackFrame(ctx, &frameInfo, stack);
+    tryFinally(ctx, "invokeJni", [&] {
+        ctx->jniException = nullptr;
+        ctx->frames[ctx->stackDepth - 1].localRefs.emplace_back();
         // ctx->suspended = true; // Todo: Suspend when entering JNI? May be necessary, but makes memory bugs much more likely
         typedef R(* FuncPtr)(jcontext, Args...);
         auto func = (FuncPtr)ptr;
         if constexpr (std::is_same_v<R, void>)
             func(ctx, args...);
         else
-            *(R *)&result = func(ctx, args...);
+            *(volatile R *)&stack[0].l = func(ctx, args...);
     }, [&] {
-        frame->localRefs.clear();
+        ctx->frames[ctx->stackDepth - 1].localRefs.clear();
         if (ctx->jniException) CPP_UNLIKELY
             throwException(ctx, (jobject)ctx->jniException);
         // ctx->suspended = false; // Todo
         SAFEPOINT();
-        popStackFrame(ctx);
     });
+    popStackFrame(ctx);
     if constexpr (std::is_same_v<R, void>)
         return;
     else
-        return *(R *)&result;
-}
-
-template <typename B, typename C, typename F>
-void tryCatchFinally(jcontext ctx, jframe frameRef, B block, jclass clazz, C catchBlock, F finally) requires std::invocable<B> and std::invocable<C, jobject> and std::invocable<F> {
-    tryCatch(frameRef, [&]{
-        block();
-    }, clazz, [&](jobject ex){
-        tryFinally(ctx, frameRef, [&]{
-            catchBlock(ex);
-        }, [&]{
-            finally();
-        });
-    });
-    finally();
+        return *(R *)&stack[0].l;
 }
 
 template <typename B, typename C, typename F>
@@ -1080,17 +1084,6 @@ void tryCatchFinally(jcontext ctx, const char *method, B block, jclass clazz, C 
 }
 
 template <typename B, typename F>
-void tryFinally(jcontext ctx, jframe frameRef, B block, F finally) requires std::invocable<B> and std::invocable<F> {
-    tryCatch(frameRef, [&]{
-        block();
-    }, nullptr, [&](jobject ex){
-        finally();
-        throwException(ctx, ex);
-    });
-    finally();
-}
-
-template <typename B, typename F>
 void tryFinally(jcontext ctx, const char *method, B block, F finally) requires std::invocable<B> and std::invocable<F> {
     tryCatch(ctx, method, [&]{
         block();
@@ -1103,27 +1096,19 @@ void tryFinally(jcontext ctx, const char *method, B block, F finally) requires s
 
 template <typename B, typename E>
 void tryCatch(jcontext ctx, const char *method, B block, jclass clazz, E except) requires std::invocable<B> and std::invocable<E, jobject> {
-    FrameInfo frameInfo { method, 0 };
-    auto frameRef = pushStackFrame(ctx, &frameInfo, nullptr);
-    tryCatch(frameRef, [&]{
-        block();
-    }, clazz, [&](jobject ex){
+    jtype frame[1];
+    ExceptionScope exceptionScope { 0, 0, clazz };
+    FrameLocation frameLocation{};
+    FrameInfo frameInfo { method, 1, 1, &frameLocation, 1, &exceptionScope };
+    auto frameRef = pushStackFrame(ctx, &frameInfo, frame);
+    if (setjmp(frameRef->landingPad)) CPP_UNLIKELY {
+        auto ex = clearCurrentException(frameRef);
+        frame->o = ex;
         except(ex);
-    });
-    popStackFrame(ctx);
-}
-
-template <typename B, typename E>
-void tryCatch(jframe frameRef, B block, jclass clazz, E except) requires std::invocable<B> and std::invocable<E, jobject> {
-    if (setjmp(*pushExceptionFrame(frameRef, clazz))) CPP_UNLIKELY {
-        auto ex = popExceptionFrame(frameRef);
-        protectObject(ex); // Doesn't cause a leak if exception is rethrow in except block, since it will be re-caught and fixed there
-        except(ex);
-        unprotectObject(ex);
         return;
     }
     block();
-    popExceptionFrame(frameRef);
+    popStackFrame(ctx);
 }
 
 template <typename F, int I, typename ...P>

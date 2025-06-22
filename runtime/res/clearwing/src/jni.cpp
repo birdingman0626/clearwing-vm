@@ -633,7 +633,7 @@ jni createJni(jcontext ctx) {
             auto ctx = (jcontext) env;
             jobject msgStr{};
             jobject obj{};
-            tryCatch(ctx, "ThrowNew", [&] {
+            tryCatch(ctx, "JNI:ThrowNew", [&] {
                 auto constructors = (jarray)clazz->constructors;
                 for (int i = 0; i < constructors->length; i++) {
                     auto constructor = ((java_lang_reflect_Constructor **)constructors->data)[i];
@@ -1550,7 +1550,7 @@ jni createJni(jcontext ctx) {
             ctx->suspended = false;
             SAFEPOINT();
             jobject pixelBuffer{};
-            tryCatchFinally(ctx, "NewDirectByteBuffer", [&] {
+            tryCatchFinally(ctx, "JNI:NewDirectByteBuffer", [&] {
                 pixelBuffer = gcAllocProtected(ctx, &class_java_nio_ByteBuffer);
                 init_java_nio_ByteBuffer_long_int_boolean(ctx, pixelBuffer, (jlong) address, (jint)capacity, false);
             }, nullptr, [&](jobject e) {
@@ -1598,7 +1598,7 @@ static int vmAttachThread(jvm, void **penv, void *args) {
     }
     jcontext ctx = createContext();
     jthread thread{};
-    tryCatch(ctx, "AttachCurrentThread", [&] {
+    tryCatch(ctx, "JNI:AttachCurrentThread", [&] {
         thread = (jthread) gcAllocEternal(ctx, &class_java_lang_Thread);
         init_java_lang_Thread(ctx, (jobject)thread); // Todo: Support name arg
     }, nullptr, [&](jobject) {

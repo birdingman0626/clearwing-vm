@@ -256,7 +256,7 @@ jobject SM_java_lang_reflect_Proxy_getProxyClass_java_lang_ClassLoader_Array1_ja
         .name = "Proxy" + std::to_string(proxyClasses.size())
     };
 
-    tryCatchFinally(ctx, "getProxyClass", [&] {
+    tryCatchFinally(ctx, "Proxy:getProxyClass", [&] {
         auto processMethod = [&](java_lang_reflect_Method *method) {
             int index = (int)proxy->methods.size();
             auto name = stringToNative(ctx, (jstring)method->F_name);

@@ -295,7 +295,7 @@ jstring createStringLiteral(jcontext ctx, StringLiteral literal) {
     static std::map<const char *, jstring> pool;
     static std::mutex lock;
     jstring value{};
-    lockGuard(ctx, lock, "createStringLiteral", [&]{
+    lockGuard(ctx, lock, "VM:createStringLiteral", [&]{
         auto it = pool.find(literal.string);
         if (it != pool.end()) {
             value = it->second;
@@ -324,7 +324,7 @@ jstring concatStringsRecipe(jcontext ctx, const char *recipe, int argCount, ...)
     va_start(args, argCount);
     volatile auto string = new std::string;
     jstring result{};
-    tryFinally(ctx, "concatStringsRecipe", [&] {
+    tryFinally(ctx, "VM:concatStringsRecipe", [&] {
         int term = 0;
         for (const char *it = recipe; *it; it++) {
             if (*it == 0x1 || *it == 0x2) {
@@ -380,7 +380,7 @@ jobject gcAllocObject(jcontext ctx, jclass clazz, int mark) {
     if (heapUsage > GC_HEAP_OOM_THRESHOLD && !outOfMem) CPP_UNLIKELY
     {
         outOfMem = true;
-        tryFinally(ctx, "throwOOM", [&] {
+        tryFinally(ctx, "GC:throwOOM", [&] {
             constructAndThrow<&class_java_lang_OutOfMemoryError, init_java_lang_OutOfMemoryError>(ctx);
         }, [&] {
             outOfMem = false;
@@ -516,13 +516,14 @@ static void collectionThreadFunc(jcontext ctx) {
             if (!collectedObjects.empty()) {
                 collected = collectedObjects;
                 collectedObjects.clear();
-                assert(collected[0]->vtable > 10);
+                if (collected[0]->vtable < 10)
+                    abort();
             }
             objectsLock.unlock();
 
             if (!collected.empty()) {
                 for (jobject obj : collected) {
-                    tryCatch(frameRef, [&]{
+                    tryCatch(ctx, "GC:finalizeObject", [&]{
                         ((finalizer_ptr)((void **)obj->vtable)[VTABLE_java_lang_Object_finalize])(ctx, obj);
                     }, &class_java_lang_Throwable, [](jobject ignored){});
                     obj->gcMark = GC_MARK_FINALIZED;
@@ -634,6 +635,9 @@ void runGC(jcontext ctx) {
         for (int i = 0; i < threadContext->stackDepth; i++) {
             const auto &frame = threadContext->frames[i];
 
+            if (frame.exception)
+                ((gc_mark_ptr) ((jclass) frame.exception->clazz)->markFunction)(frame.exception, mark, 0);
+
             for (auto &localFrame : frame.localRefs)
                 for (auto local : localFrame)
                     ((gc_mark_ptr) ((jclass) local->clazz)->markFunction)(local, mark, 0);
@@ -662,7 +666,8 @@ void runGC(jcontext ctx) {
     for (jobject obj : *objects) {
         if (obj->gcMark < GC_MARK_START || obj->gcMark == mark)
             continue;
-        assert(obj->vtable > 10 && obj->gcMark <= GC_MARK_COLLECTED);
+        if (obj->vtable < 10 || obj->gcMark <= GC_MARK_COLLECTED)
+            abort();
         obj->gcMark = GC_MARK_COLLECTED;
         collectedObjects.emplace_back(obj);
 
@@ -801,27 +806,6 @@ void safepointSuspend(jcontext ctx) {
     ctx->suspended = false;
 }
 
-/// Pushes an exception frame onto the given stack frame. `type` can be null. Does not throw exceptions.
-jmp_buf *pushExceptionFrame(jframe frame, jclass type) {
-    if ((int)frame->exceptionFrames.size() < frame->exceptionFrameDepth + 1) CPP_UNLIKELY
-        frame->exceptionFrames.resize(frame->exceptionFrameDepth + 1);
-    auto &exceptionFrame = frame->exceptionFrames[frame->exceptionFrameDepth++];
-    exceptionFrame.type = type;
-    return &exceptionFrame.landingPad;
-}
-
-/// Pops an exception frame then returns and clears the current exception. Does not throw exceptions.
-jobject popExceptionFrame(jframe frame) {
-    assertm(frame->exceptionFrameDepth > 0, "No exception frame to pop");
-    frame->exceptionFrameDepth--;
-    return clearCurrentException(frame);
-}
-
-void popExceptionFrames(jframe frame, int count) {
-    assertm(frame->exceptionFrameDepth >= count, "No exception frame to pop");
-    frame->exceptionFrameDepth -= count;
-}
-
 jobject clearCurrentException(jframe frame) {
     auto exception = frame->exception;
     frame->exception = nullptr;
@@ -832,13 +816,15 @@ jobject clearCurrentException(jframe frame) {
 void throwException(jcontext ctx, jobject exception) {
     while (ctx->stackDepth > 0) {
         auto &frame = ctx->frames[ctx->stackDepth - 1];
-        while (frame.exceptionFrameDepth > 0) {
-            auto &exceptionFrame = frame.exceptionFrames[frame.exceptionFrameDepth - 1];
-            if (!exceptionFrame.type or isInstance(ctx, exception, exceptionFrame.type)) {
-                frame.exception = exception;
-                longjmp(exceptionFrame.landingPad, 1);
-            }
-            frame.exceptionFrameDepth--;
+        auto info = frame.info;
+        for (int i = 0; i < info->exceptionScopeCount; i++) {
+            auto &scope = info->exceptionScopes[i];
+            if (frame.location < scope.startLocation || frame.location > scope.endLocation)
+                continue;
+            if (scope.type && !isInstance(ctx, exception, scope.type))
+                continue;
+            frame.exception = exception;
+            longjmp(frame.landingPad, i + 1);
         }
         if (frame.monitor) {
             monitorExit(ctx, frame.monitor); // Todo: Stack overflows if this throws an exception

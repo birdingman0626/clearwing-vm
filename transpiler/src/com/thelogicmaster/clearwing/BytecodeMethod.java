@@ -2,8 +2,8 @@ package com.thelogicmaster.clearwing;
 
 import com.thelogicmaster.clearwing.bytecode.Instruction;
 import com.thelogicmaster.clearwing.bytecode.LabelInstruction;
+import com.thelogicmaster.clearwing.bytecode.LineNumberInstruction;
 import com.thelogicmaster.clearwing.bytecode.TryInstruction;
-import org.objectweb.asm.Handle;
 import org.objectweb.asm.Label;
 import org.objectweb.asm.Opcodes;
 
@@ -22,13 +22,13 @@ public class BytecodeMethod {
 	private final String[] exceptions;
 
 	private final ArrayList<Instruction> instructions = new ArrayList<>();
-	private final ArrayList<TryInstruction> tryCatchBlocks = new ArrayList<>();
 	private final ArrayList<BytecodeAnnotation> annotations = new ArrayList<>();
 	private int stackSize;
 	private int localCount;
-	private int tryCatchBypasses;
 	private final HashMap<Label, Integer> labelIds = new HashMap<>();
 	private int labelCount;
+	private final ArrayList<Location> locations = new ArrayList<>();
+	private final ArrayList<ExceptionFrame> exceptionFrames = new ArrayList<>();
 	private boolean intrinsic;
 	private boolean generated;
 
@@ -102,21 +102,7 @@ public class BytecodeMethod {
 		for (Instruction instruction: instructions)
 			instruction.resolveSymbols();
 	}
-
-	/**
-	 * Allocates a new try-catch bypass and returns the index
-	 */
-	public int allocateTryCatchBypass() {
-		// Todo: This should reuse bypasses for the same destination.
-		// Todo: Could also use one bypass integer per try-catch to avoid extra checks
-		// Todo: Jumps into exception blocks could just push the needed frames before jumping
-		return tryCatchBypasses++;
-	}
-
-	public int getTryCatchBypasses() {
-		return tryCatchBypasses;
-	}
-
+	
 	public int getLabelId(Label label) {
 		if (label == null)
 			return -1;
@@ -192,6 +178,13 @@ public class BytecodeMethod {
 			throw new TranspilerException("Failed to find instruction");
 		return -1;
 	}
+	
+	public int findLineNumber(int start, int defaultLine) {
+		for (int i = start; i >= 0; i--)
+			if (instructions.get(i) instanceof LineNumberInstruction lineInst)
+				return lineInst.getLine();
+		return defaultLine;
+	}
 
 	public void addAnnotation(BytecodeAnnotation annotation) {
 		annotations.add(annotation);
@@ -258,12 +251,22 @@ public class BytecodeMethod {
 		return localCount;
 	}
 
-	public void addTryCatch(TryInstruction tryInstruction) {
-		tryCatchBlocks.add(tryInstruction);
+	public void addTryCatch(Label start, Label end, Label handler, String type) {
+		exceptionFrames.add(new ExceptionFrame(type, getLabelId(start), getLabelId(end), getLabelId(handler), exceptionFrames.size()));
+	}
+	
+	public Location addLocation(int line) {
+		Location location = new Location(line, locations.size());
+		locations.add(location);
+		return location;
 	}
 
-	public List<TryInstruction> getTryCatchBlocks() {
-		return tryCatchBlocks;
+	public ArrayList<ExceptionFrame> getExceptionFrames() {
+		return exceptionFrames;
+	}
+
+	public ArrayList<Location> getLocations() {
+		return locations;
 	}
 
 	public MethodSignature getSignature() {
@@ -285,5 +288,92 @@ public class BytecodeMethod {
 		if (!(obj instanceof BytecodeMethod))
 			return false;
 		return ((BytecodeMethod) obj).methodType.equals(methodType);
+	}
+
+	public static class ExceptionFrame {
+		private final String type;
+		private final String qualifiedType;
+		private final int startLabel;
+		private final int endLabel;
+		private final int handlerLabel;
+		private final int index;
+		private int startLocation;
+		private int endLocation;
+		
+		public ExceptionFrame(String type, int start, int end, int handler, int index) {
+			this.type = type;
+			this.qualifiedType = type == null ? null : Utils.getQualifiedClassName(type);
+			this.startLabel = start;
+			this.endLabel = end;
+			this.handlerLabel = handler;
+			this.index = index;
+		}
+
+		public String getType() {
+			return type;
+		}
+
+		public String getQualifiedType() {
+			return qualifiedType;
+		}
+		
+		public int getStartLabel() {
+			return startLabel;
+		}
+
+		public int getEndLabel() {
+			return endLabel;
+		}
+		
+		public int getHandlerLabel() {
+			return handlerLabel;
+		}
+
+		public int getIndex() {
+			return index;
+		}
+
+		public void setStartLocation(int startLocation) {
+			this.startLocation = startLocation;
+		}
+
+		public void setEndLocation(int endLocation) {
+			this.endLocation = endLocation;
+		}
+
+		public int getStartLocation() {
+			return startLocation;
+		}
+
+		public int getEndLocation() {
+			return endLocation;
+		}
+		
+		public void build(StringBuilder builder) {
+			builder.append("{ ").append(startLocation).append(", ").append(endLocation).append(", ")
+					.append(type == null ? "nullptr" : "&class_" + qualifiedType).append(" }");
+		}
+	}
+	
+	public static class Location {
+		private final int line;
+		private final int index;
+
+		public Location(int line, int index) {
+			this.line = line;
+			this.index = index;
+		}
+		
+		public int getLine() { 
+			return line; 
+		}
+		
+		public int getIndex() {
+			return index;
+		}
+		
+		public void build(StringBuilder builder) {
+			builder.append("{ ").append(line).append(" }");
+		}
 	}
 }

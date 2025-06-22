@@ -315,7 +315,7 @@ public class Parser extends ClassVisitor {
 
         @Override
         public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
-            method.addTryCatch(new TryInstruction(method, start, end, handler, type));
+            method.addTryCatch(start, end, handler, type);
         }
 
         @Override
@@ -346,11 +346,9 @@ public class Parser extends ClassVisitor {
         public void visitEnd() {
             // Todo: Move to BytecodeMethod
 
-            insertTryCatchBlocks();
+            processExceptionFrames();
             resolveInstructionIO();
-            trimLabels();
-            handleTryCatchOuterJumps();
-            insertTryCatchBypasses();
+//            trimLabels();
             
             if (config.useOptimizations())
                 groupInstructions();
@@ -383,7 +381,7 @@ public class Parser extends ClassVisitor {
                     stack.addAll(instruction.getOutputs());
 
                 if (instruction instanceof TryInstruction) {
-                    resolveInstructionIO(method.findLabelInstruction(((TryInstruction) instruction).getHandler()),
+                    resolveInstructionIO(method.findLabelInstruction(((TryInstruction) instruction).getFrame().getHandlerLabel()),
                             new ArrayList<>(List.of(new StackEntry(new JavaType(TypeVariants.OBJECT), instruction))));
                 } else if (instruction instanceof JumpingInstruction) {
                     for (int label : ((JumpingInstruction) instruction).getJumpLabels())
@@ -442,100 +440,64 @@ public class Parser extends ClassVisitor {
                 if (instructions.get(i) instanceof LabelInstruction && !used.contains(((LabelInstruction) instructions.get(i)).getLabel()))
                     instructions.remove(i--);
         }
-
-        // Todo: This whole exception handling approach is overcomplicated and not super efficient
-        // Todo: A much better approach would be to store integer "locations" into a local variable and map locations to exception blocks when unwinding
-        // Todo: This could also apply to line numbers to reduce memory accesses. Use a pointer to a local variable to avoid an indirection.
         
-        /**
-         * Insert helper instructions for try-catch blocks
-         */
-        private void insertTryCatchBlocks() {
+        // Todo: Zero-cost exception handling and stack frames can be accomplished with the use of debug symbols.
+        // Todo: On Switch, debug symbols are not available, so symbols would have to be extracted from ELF at compile time.
+        // Todo: Debug symbols give program offsets of function sections and line numbers, which can be associated back with
+        // Todo: the transpiled location indices. The address of a particular function can be used to find the program base
+        // Todo: address. Line numbers and locations can be computed during code generation and stored in FrameInfo/MethodInfo (Exceptions only needed in try-catch). 
+        // Todo: Unwinding the stack should allow finding Java stack frames to scan for GC.
+        // Todo: bdwgc GC could be a big improvement in garbage collection and optimizations (Suspend all threads and check registers).
+        // Todo: To replace longjmp/setjmp, a try-catch block surrounding the function body and a jump table should do.
+        // Todo: In order to entirely replace runtime pushing of stack frames, try-finally must be employed for synchronized methods.
+
+        private void processExceptionFrames() {
+            List<BytecodeMethod.ExceptionFrame> frames = method.getExceptionFrames();
             List<Instruction> instructions = method.getInstructions();
-            List<TryInstruction> tryCatchBlocks = new ArrayList<>(method.getTryCatchBlocks());
 
-            // Invert order for nested try-catch with same start label
-            for (int i = 0; i < tryCatchBlocks.size(); i++) {
-                int first = i;
-                while (i + 1 < tryCatchBlocks.size() && tryCatchBlocks.get(first).getStart() == tryCatchBlocks.get(i + 1).getStart())
-                    i++;
-                int last = i;
-                if (first == last)
-                    continue;
-                for (int j = 0; j < (last - first + 1) / 2; j++) {
-                    TryInstruction temp = tryCatchBlocks.get(first + j);
-                    tryCatchBlocks.set(first + j, tryCatchBlocks.get(last - j));
-                    tryCatchBlocks.set(last - j, temp);
-                }
-            }
-
-            // Insert "Catch" block instructions
-            for (TryInstruction tryCatch : tryCatchBlocks) {
-                int index = method.findLabelInstruction(tryCatch.getStart());
+            // Insert try-catch instructions
+            for (BytecodeMethod.ExceptionFrame frame : frames) {
+                int index = method.findLabelInstruction(frame.getStartLabel());
+                TryInstruction tryCatch = new TryInstruction(method, frame);
                 instructions.add(index + 1, tryCatch);
                 index = method.findInstruction(index, instructions.size(), true,
-                        instr -> instr instanceof LabelInstruction && ((LabelInstruction) instr).getLabel() == tryCatch.getEnd());
+                        instr -> instr instanceof LabelInstruction && ((LabelInstruction) instr).getLabel() == tryCatch.getFrame().getEndLabel());
                 instructions.add(index + 1, tryCatch.getCatchInstruction());
             }
-        }
-        
-        private void insertTryCatchBypasses() {
-            List<Instruction> instructions = method.getInstructions();
+            
+            // Create locations
+            int[] instructionLocations = new int[instructions.size()];
+            int currentLine = 0;
+            int currentLocation = -1;
             for (int i = 0; i < instructions.size(); i++) {
-                if (!(instructions.get(i) instanceof JumpingInstruction jump))
-                    continue;
-                ArrayList<Integer> jumpStack = getTryStack(i);
-                for (int label : jump.getJumpLabels()) {
-                    int target = method.findLabelInstruction(label);
-                    ArrayList<Integer> targetStack = getTryStack(target);
-                    for (int j = 0; j < targetStack.size(); j++) {
-                        if (j < jumpStack.size() && jumpStack.get(j).equals(targetStack.get(j)))
-                            continue;
-                        int currentLabel = label;
-                        int bypassIndex = method.allocateTryCatchBypass();
-                        for (int k = targetStack.size() - 1; k >= j; k--) {
-                            int tryLabel = targetStack.get(k);
-                            TryInstruction tryCatch = (TryInstruction) instructions.get(method.findInstruction(0, instructions.size(), true, inst -> inst instanceof TryInstruction t && t.getLabel() == tryLabel));
-                            tryCatch.createBypass(currentLabel, label, bypassIndex);
-                            currentLabel = tryCatch.getLabel();
-                        }
-                        jump.setJumpBypass(bypassIndex, label, currentLabel);
-                        break;
-                    }
-                }
-            }
-        }
-        
-        private ArrayList<Integer> getTryStack(int index) {
-            ArrayList<Integer> stack = new ArrayList<>();
-            List<Instruction> instructions = method.getInstructions();
-            for (int i = 0; i <= index; i++) {
                 Instruction instruction = instructions.get(i);
-                if (instruction instanceof TryInstruction tryInstruction)
-                    stack.add(tryInstruction.getLabel());
-                if (index == i)
-                    break;
-                if (instruction instanceof TryInstruction.CatchInstruction)
-                    stack.remove(stack.size() - 1);
+                if (instruction instanceof TryInstruction tryInstruction) {
+                    currentLocation = method.addLocation(currentLine).getIndex();
+                    tryInstruction.getFrame().setStartLocation(currentLocation);
+                    int index = method.findLabelInstruction(tryInstruction.getFrame().getStartLabel());
+                    ((LabelInstruction)instructions.get(index)).setLocation(currentLocation);
+                } else if (instruction instanceof TryInstruction.CatchInstruction catchInstruction) {
+                    currentLocation = method.addLocation(currentLine).getIndex();
+                    catchInstruction.getTry().getFrame().setEndLocation(currentLocation);
+                    int index = method.findLabelInstruction(catchInstruction.getTry().getFrame().getEndLabel());
+                    ((LabelInstruction)instructions.get(index)).setLocation(currentLocation);
+                } else if (instruction instanceof LineNumberInstruction lineInstruction) {
+                    currentLine = lineInstruction.getLine();
+                    currentLocation = method.addLocation(currentLine).getIndex();
+                    lineInstruction.setLocation(currentLocation);
+                }
+                instructionLocations[i] = currentLocation;
             }
-            return stack;
-        }
-        
-        private void handleTryCatchOuterJumps() {
-            List<Instruction> instructions = method.getInstructions();
+
+            // Write location after jumps to different location
             for (int i = 0; i < instructions.size(); i++) {
-                if (!(instructions.get(i) instanceof JumpingInstruction jump))
-                    continue;
-                ArrayList<Integer> jumpStack = getTryStack(i);
-                List<Integer> targetLabels = jump.getJumpLabels();
-                for (int j = 0; j < targetLabels.size(); j++) {
-                    int target = method.findLabelInstruction(targetLabels.get(j));
-                    ArrayList<Integer> targetStack = getTryStack(target);
-                    for (int k = 0; k < jumpStack.size(); k++) {
-                        if (k < targetStack.size() && targetStack.get(k).equals(jumpStack.get(k)))
-                            continue;
-                        jump.setJumpExceptionPops(j, jumpStack.size() - k);
-                        break;
+                Instruction instruction = instructions.get(i);
+                if (instruction instanceof JumpingInstruction jumpingInstruction) {
+                    for (int label : jumpingInstruction.getJumpLabels()) {
+                        int index = method.findLabelInstruction(label);
+                        LabelInstruction labelInst = (LabelInstruction)instructions.get(index);
+                        if (instructionLocations[i] != instructionLocations[index] && labelInst.getLocation() < 0)
+                            labelInst.setLocation(instructionLocations[index]);
                     }
                 }
             }
