@@ -243,7 +243,7 @@ class AnnotationEnumValue extends AnnotationValue {
 	@Override
 	public void append (StringBuilder builder, String target, boolean fieldTarget, HashMap<String, BytecodeClass> classMap) {
 		String qualifiedName = Utils.getQualifiedClassName(clazz);
-		builder.append("\t\tclinit_").append(qualifiedName).append("(ctx);\n");
+		builder.append("\t\tCLINIT(").append(qualifiedName).append(");\n");
 		builder.append("\t\t").append(target).append(" = ").append(fieldTarget ? "(intptr_t) " : "").append(Utils.sanitizeField(qualifiedName, value, true)).append(";\n");
 	}
 

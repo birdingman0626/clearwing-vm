@@ -78,7 +78,7 @@ public class FieldInstruction extends Instruction {
             throw new TranspilerException("Failed to find owner class for: " + name + " needed for " + method.getName());
         
         if (isStatic) // Todo: Skip on same class for clinit
-            builder.append("\tclinit_").append(qualifiedOwner).append("(ctx);\n");
+            builder.append("\tCLINIT(").append(qualifiedOwner).append(");\n");
         
         switch (opcode) {
             case Opcodes.GETSTATIC ->
@@ -104,7 +104,7 @@ public class FieldInstruction extends Instruction {
             throw new TranspilerException("Failed to find owner class for: " + name + " needed for " + method.getName());
         
         if (isStatic) // Todo: Skip on same class for clinit
-            builder.append("\tclinit_").append(qualifiedOwner).append("(ctx);\n");
+            builder.append("\tCLINIT(").append(qualifiedOwner).append(");\n");
 
         switch (opcode) {
             case Opcodes.GETSTATIC -> outputs.get(0).buildAssignment(builder).append("(")
@@ -125,7 +125,7 @@ public class FieldInstruction extends Instruction {
     @Override
     public void appendInlined(StringBuilder builder) {
         switch (opcode) {
-            case Opcodes.GETSTATIC -> builder.append("clinit_").append(qualifiedOwner).append("(ctx), (")
+            case Opcodes.GETSTATIC -> builder.append("[ctx]{CLINIT(").append(qualifiedOwner).append(");}(), (")
                     .append(type.getArithmeticType()).append(")").append(realName);
             case Opcodes.GETFIELD -> builder.append("(").append(type.getBasicType().getArithmeticType()).append(")")
                     .append("((").append(realOwnerClass.getQualifiedName()).append(" *) NULL_CHECK(")

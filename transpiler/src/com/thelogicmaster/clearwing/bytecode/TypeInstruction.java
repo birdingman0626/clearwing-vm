@@ -26,7 +26,7 @@ public class TypeInstruction extends Instruction {
     public void appendUnoptimized(StringBuilder builder, TranspilerConfig config) {
         switch (opcode) {
             case Opcodes.NEW -> {
-                builder.append("\tclinit_").append(qualifiedType).append("(ctx);\n");
+                builder.append("\tCLINIT(").append(qualifiedType).append(");\n");
                 builder.append("\tPUSH_OBJECT(gcAlloc(ctx, &class_").append(qualifiedType).append("));\n");
             }
             case Opcodes.ANEWARRAY -> appendStandardInstruction(builder, "anewarray", javaType.generateClassFetch());
@@ -40,7 +40,7 @@ public class TypeInstruction extends Instruction {
     public void appendOptimized(StringBuilder builder, TranspilerConfig config) {
         switch (opcode) {
             case Opcodes.NEW -> {
-                builder.append("\tclinit_").append(qualifiedType).append("(ctx);\n");
+                builder.append("\tCLINIT(").append(qualifiedType).append(");\n");
                 outputs.get(0).buildAssignment(builder).append("gcAlloc(ctx, &class_").append(qualifiedType).append(");\n");;
             }
             case Opcodes.ANEWARRAY -> outputs.get(0).buildAssignment(builder).append("(jobject)createArray(ctx, ")

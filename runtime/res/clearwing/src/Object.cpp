@@ -9,6 +9,8 @@
 
 extern "C" {
 
+bool initialized_java_lang_Object;
+
 void clinit_java_lang_Object(jcontext ctx) {
 }
 

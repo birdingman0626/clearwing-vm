@@ -345,6 +345,8 @@ jint longCompare(jlong value1, jlong value2);
 
 #define SEMICOLON_RECEPTOR 0
 
+#define CLINIT(clazz) if (!initialized_##clazz) CPP_UNLIKELY clinit_##clazz(ctx)
+
 #define CONSTRUCT_OBJECT(clazz, constructor, ...) \
     ({ jobject object = gcAllocNative(ctx, clazz); \
     constructor(ctx, object __VA_OPT__(,) __VA_ARGS__); \

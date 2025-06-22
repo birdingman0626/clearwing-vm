@@ -303,6 +303,8 @@ public class BytecodeClass {
 
 		builder.append("extern Class class_").append(qualifiedName).append(";\n\n");
 
+		builder.append("extern bool initialized_").append(qualifiedName).append(";\n\n");
+
 		// Static fields
 		for (BytecodeField field : fields) {
 			if (!field.isStatic())
@@ -354,6 +356,8 @@ public class BytecodeClass {
 		builder.append("\n");
 
 		builder.append("extern \"C\" {\n\n");
+
+		builder.append("bool initialized_").append(qualifiedName).append(";\n\n");
 
 		// Static fields
 		for (BytecodeField field : fields) {
@@ -483,7 +487,7 @@ public class BytecodeClass {
 
 			// Todo: Macros to check for class initialization before calling
 			if (method.isStatic() || method.isConstructor())
-				builder.append("\tclinit_").append(qualifiedName).append("(ctx);\n");
+				builder.append("\tCLINIT(").append(qualifiedName).append(");\n");
 
 			if (!method.getExceptionFrames().isEmpty()) {
 				builder.append("\n\tMETHOD_EXCEPTION_HANDLING_START(\n");
@@ -715,7 +719,7 @@ public class BytecodeClass {
 		builder.append("\tif (initialized) return;\n");
 		builder.append("\tinitialized = true;\n");
 		if (superClass != null)
-			builder.append("\tclinit_").append(superClass.qualifiedName).append("(ctx);\n");
+			builder.append("\tCLINIT(").append(superClass.qualifiedName).append(");\n");
 		// Todo: Try-catch to rethrow with initializer exception?
 		for (BytecodeField field: fields)
 			if (field.isStatic() && field.isFinal() && field.getInitialValue() != null)

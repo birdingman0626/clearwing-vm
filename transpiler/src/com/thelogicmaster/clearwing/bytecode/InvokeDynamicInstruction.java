@@ -28,7 +28,7 @@ public class InvokeDynamicInstruction extends Instruction {
     public void appendUnoptimized(StringBuilder builder, TranspilerConfig config) {
         // Todo: Cache proxies without args 
         builder.append("\t{ /* InvokeDynamic */\n");
-        builder.append("\t\tclinit_").append(qualifiedProxyClassName).append("(ctx);\n");
+        builder.append("\t\tCLINIT(").append(qualifiedProxyClassName).append(");\n");
         builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
         for (int i = proxyFields.length - 1; i >= 0; i--)
             builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append("(--sp)->").append(proxyFields[i].getBasicType().getStackName()).append(";\n");
@@ -40,7 +40,7 @@ public class InvokeDynamicInstruction extends Instruction {
     public void appendOptimized(StringBuilder builder, TranspilerConfig config) {
         // Todo: Cache proxies without args 
         builder.append("\t{ /* InvokeDynamic */\n");
-        builder.append("\t\tclinit_").append(qualifiedProxyClassName).append("(ctx);\n");
+        builder.append("\t\tCLINIT(").append(qualifiedProxyClassName).append(");\n");
         builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
         for (int i = proxyFields.length - 1; i >= 0; i--)
             builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append(inputs.get(i).arg()).append(";\n");

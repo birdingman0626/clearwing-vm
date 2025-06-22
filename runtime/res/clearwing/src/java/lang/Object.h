@@ -7,6 +7,8 @@
 extern "C" {
 #endif
 
+extern bool initialized_java_lang_Object;
+
 #define VTABLE_java_lang_Object_hashCode_R_int 0
 #define VTABLE_java_lang_Object_equals_java_lang_Object_R_boolean 1
 #define VTABLE_java_lang_Object_clone_R_java_lang_Object 2
