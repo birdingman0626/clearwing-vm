@@ -186,3 +186,27 @@ the target interface, store captured values, and handle primitive boxing convers
 the lambda factory InvokeDynamic and string builder targets, so compiling with a version later than Java 8 may introduce 
 unsupported calls for string building and such. Default methods are implemented by populating inheriting class
 vtables with default values before populating overwriting implementations.
+
+
+### Java 17 Features
+The project now supports JDK 17 with backward compatibility for JDK 8-17 features.
+The ASM library has been updated from version 7 to 9.7 to handle JDK 17 bytecode.
+All `Opcodes.ASM*` references have been updated to `ASM9`.
+
+#### Supported Features
+- **Module system**: Basic `java.lang.module` support with `Module` and `ModuleDescriptor`
+- **Collection factory methods**: `List.of()`, `Set.of()`, `Map.of()`
+- **String enhancements**: `isBlank()`, `strip()`, `stripLeading()`, `stripTrailing()`, `repeat()`, `lines()`
+- **Collection improvements**: Enhanced `copyOf()` methods
+- **Sealed classes**: Basic `isSealed()` and `getPermittedSubclasses()` support (returns empty)
+- **Records**: Basic `isRecord()` and `getRecordComponents()` support with `RecordComponent` class
+- **Text blocks**: Compiler support (if using JDK 15+)
+- **Pattern matching**: Enhanced `instanceof` (if using JDK 16+)
+- **String formatting**: `formatted()` method (JDK 15+)
+
+### Transpiler
+The transpiler is written in Java and uses the ASM library to read and parse Java class files. It then
+partially decompiles the Bytecode into a more optimizable form, which is then used to generate C++ code.
+The transpiler is designed to be modular, extensible, and easy to use, with a simple command line
+interface and a Gradle plugin for integration into existing projects. A focus was placed on performance, 
+correctness, and maintainability, with extensive documentation, logging, and testing capabilities.
