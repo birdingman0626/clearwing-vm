@@ -565,6 +565,58 @@ public final class Class<T> implements java.lang.reflect.Type {
         return null;
     }
 
+    // JDK 9+ methods
+    public java.lang.module.Module getModule() {
+        return new java.lang.module.Module(getPackageName(), null, getClassLoader());
+    }
+    
+    public String getPackageName() {
+        String name = getName();
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(0, dot);
+    }
+    
+    public String getTypeName() {
+        if (isArray()) {
+            return getComponentType().getTypeName() + "[]";
+        }
+        return getName();
+    }
+    
+    public String toGenericString() {
+        return toString();
+    }
+    
+    public boolean isNestmate(Class<?> c) {
+        return false; // Simplified implementation
+    }
+    
+    public Class<?> getNestHost() {
+        return this;
+    }
+    
+    public Class<?>[] getNestMembers() {
+        return new Class<?>[] { this };
+    }
+    
+    // JDK 14+ methods
+    public Class<?>[] getPermittedSubclasses() {
+        return new Class<?>[0];
+    }
+    
+    public boolean isSealed() {
+        return false;
+    }
+    
+    // JDK 16+ methods
+    public boolean isRecord() {
+        return false;
+    }
+    
+    public java.lang.reflect.RecordComponent[] getRecordComponents() {
+        return new java.lang.reflect.RecordComponent[0];
+    }
+
     @Override
     protected void finalize() throws Throwable {
         System.err.println("A Class was disposed! This should never happen.");

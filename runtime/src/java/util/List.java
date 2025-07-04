@@ -364,4 +364,62 @@ public interface List<E> extends Collection<E> {
     default Spliterator<E> spliterator() {
         return (Spliterator)(this instanceof RandomAccess ? new AbstractList.RandomAccessSpliterator(this) : Spliterators.spliterator(this, 16));
     }
+    
+    // JDK 9+ methods
+    static <E> List<E> of() {
+        return new ArrayList<>();
+    }
+    
+    static <E> List<E> of(E e1) {
+        List<E> list = new ArrayList<>();
+        list.add(e1);
+        return list;
+    }
+    
+    static <E> List<E> of(E e1, E e2) {
+        List<E> list = new ArrayList<>();
+        list.add(e1);
+        list.add(e2);
+        return list;
+    }
+    
+    static <E> List<E> of(E e1, E e2, E e3) {
+        List<E> list = new ArrayList<>();
+        list.add(e1);
+        list.add(e2);
+        list.add(e3);
+        return list;
+    }
+    
+    static <E> List<E> of(E e1, E e2, E e3, E e4) {
+        List<E> list = new ArrayList<>();
+        list.add(e1);
+        list.add(e2);
+        list.add(e3);
+        list.add(e4);
+        return list;
+    }
+    
+    static <E> List<E> of(E e1, E e2, E e3, E e4, E e5) {
+        List<E> list = new ArrayList<>();
+        list.add(e1);
+        list.add(e2);
+        list.add(e3);
+        list.add(e4);
+        list.add(e5);
+        return list;
+    }
+    
+    @SafeVarargs
+    static <E> List<E> of(E... elements) {
+        List<E> list = new ArrayList<>();
+        for (E element : elements) {
+            list.add(element);
+        }
+        return list;
+    }
+    
+    static <E> List<E> copyOf(Collection<? extends E> coll) {
+        return new ArrayList<>(coll);
+    }
 }

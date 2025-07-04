@@ -18,7 +18,7 @@ public class Parser extends ClassVisitor {
     private final HashMap<String, HashMap<String, Integer>> invokeDynamicCounts = new HashMap<>();
 
     public Parser(TranspilerConfig config) {
-        super(Opcodes.ASM7);
+        super(Opcodes.ASM9);
         this.config = config;
     }
 
@@ -76,7 +76,7 @@ public class Parser extends ClassVisitor {
     public FieldVisitor visitField(int access, String name, String desc, String signature, Object value) {
         BytecodeField field = new BytecodeField(currentClass, name, access, desc, signature, value);
         currentClass.addField(field);
-        return new FieldVisitor(Opcodes.ASM5) {
+        return new FieldVisitor(Opcodes.ASM9) {
             @Override
             public AnnotationVisitor visitAnnotation(String descriptor, boolean visible) {
                 if (!visible)
@@ -112,7 +112,7 @@ public class Parser extends ClassVisitor {
         private final BytecodeMethod method;
 
         public MethodParser(BytecodeMethod method) {
-            super(Opcodes.ASM6);
+            super(Opcodes.ASM9);
             this.method = method;
         }
 
@@ -510,7 +510,7 @@ public class Parser extends ClassVisitor {
         private final String valueName;
 
         public AnnotationParser (BytecodeAnnotation annotation, @Nullable String valueName) {
-            super(Opcodes.ASM6);
+            super(Opcodes.ASM9);
             this.annotation = annotation;
             this.valueName = valueName;
         }
@@ -534,7 +534,7 @@ public class Parser extends ClassVisitor {
 
         @Override
         public AnnotationVisitor visitArray(String name) {
-            return new AnnotationVisitor(Opcodes.ASM6) {
+            return new AnnotationVisitor(Opcodes.ASM9) {
                 private final ArrayList<Object> array = new ArrayList<>();
 
                 @Override

@@ -197,4 +197,62 @@ public interface Set<E> extends Collection<E> {
     default Spliterator<E> spliterator() {
         return Spliterators.spliterator(this, 1);
     }
+    
+    // JDK 9+ methods
+    static <E> Set<E> of() {
+        return new HashSet<>();
+    }
+    
+    static <E> Set<E> of(E e1) {
+        Set<E> set = new HashSet<>();
+        set.add(e1);
+        return set;
+    }
+    
+    static <E> Set<E> of(E e1, E e2) {
+        Set<E> set = new HashSet<>();
+        set.add(e1);
+        set.add(e2);
+        return set;
+    }
+    
+    static <E> Set<E> of(E e1, E e2, E e3) {
+        Set<E> set = new HashSet<>();
+        set.add(e1);
+        set.add(e2);
+        set.add(e3);
+        return set;
+    }
+    
+    static <E> Set<E> of(E e1, E e2, E e3, E e4) {
+        Set<E> set = new HashSet<>();
+        set.add(e1);
+        set.add(e2);
+        set.add(e3);
+        set.add(e4);
+        return set;
+    }
+    
+    static <E> Set<E> of(E e1, E e2, E e3, E e4, E e5) {
+        Set<E> set = new HashSet<>();
+        set.add(e1);
+        set.add(e2);
+        set.add(e3);
+        set.add(e4);
+        set.add(e5);
+        return set;
+    }
+    
+    @SafeVarargs
+    static <E> Set<E> of(E... elements) {
+        Set<E> set = new HashSet<>();
+        for (E element : elements) {
+            set.add(element);
+        }
+        return set;
+    }
+    
+    static <E> Set<E> copyOf(Collection<? extends E> coll) {
+        return new HashSet<>(coll);
+    }
 }

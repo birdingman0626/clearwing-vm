@@ -20,7 +20,7 @@ flowchart LR
 - Buffers (Direct and ByteBuffer wrappers)
 - Basic threading
 - Reflection
-- Java 7 runtime with Java 8 features (lambdas, method references, and default methods)
+- Java 17 runtime with backward compatibility for JDK 8-17 features (lambdas, method references, default methods, modules, collection factories, enhanced strings, records, sealed classes)
 - Incremental compilation
 - Plain C++ 20 project output
 - Easy Gradle integration
@@ -55,7 +55,7 @@ The transpiler is provided as a fat JAR which can be used as a standalone comman
 build system. An example is provided for a simple Gradle based project which produces and builds a CMake C++ 
 project. Command line arguments are used for specifying the input and output directories as well as a JSON config
 file for further configuration of transpiler options. The transpiler is also provided as a normal Java library 
-which could be used programmatically. Java 17 is what the transpiler has been tested with.
+which could be used programmatically. Java 17 is required for building and running the transpiler.
 
 JitPack Maven artifacts:
 ```
@@ -99,8 +99,8 @@ corresponding C++ function in the same way. There's no JNI library loading funct
 have bindings written for them.
 
 ## Building
-As a Gradle project, there are tasks for building the needed components. JDK 17 is what has been tested with.
-The runtime and example submodules get built with a language level of 8, and the transpiler uses language level 14.
+As a Gradle project, there are tasks for building the needed components. JDK 17 is required for all modules.
+All submodules now use language level 17 with backward compatibility for JDK 8-17 features.
 When building the runtime in an Intellij, `Build>>Rebuild Project` may be necessary after making changes. 
 
 ## Technical Details

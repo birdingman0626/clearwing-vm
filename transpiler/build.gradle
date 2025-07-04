@@ -6,8 +6,8 @@ plugins {
 
 apply plugin: 'maven-publish'
 
-sourceCompatibility = 1.16
-targetCompatibility = 1.16
+sourceCompatibility = 17
+targetCompatibility = 17
 
 sourceSets {
     main {
@@ -15,6 +15,15 @@ sourceSets {
             srcDirs 'src'
         }
     }
+    test {
+        java {
+            srcDirs 'src/test/java'
+        }
+    }
+}
+
+test {
+    useJUnitPlatform()
 }
 
 application {
@@ -32,7 +41,10 @@ dependencies {
     implementation 'com.github.javaparser:javaparser-symbol-solver-core:3.24.9'
     implementation project('::annotations')
 
-    runtimeOnly project('::runtime')
+    // runtimeOnly project('::runtime') // Commented out due to module conflicts
+    
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 shadowJar {

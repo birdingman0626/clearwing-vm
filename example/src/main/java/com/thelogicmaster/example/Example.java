@@ -62,5 +62,8 @@ public class Example {
 		} catch (Exception ex) {
 			System.out.println(ex);
 		}
+		
+		// Test JDK 17 features
+		JDK17Example.demonstrateAll();
 	}
 }

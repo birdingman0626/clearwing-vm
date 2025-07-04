@@ -17,6 +17,9 @@
 
 package java.util;
 
+import java.util.stream.Stream;
+import java.util.stream.StreamImpl;
+
 /**
  * {@code Collection} is the root of the collection hierarchy. It defines operations on
  * data collections and the behavior that they will have in all implementations
@@ -315,5 +318,21 @@ public interface Collection<E> extends java.lang.Iterable<E> {
 
     default Spliterator<E> spliterator() {
         return Spliterators.spliterator(this, 0);
+    }
+
+    /**
+     * Returns a sequential Stream with this collection as its source.
+     * @return a sequential Stream over the elements in this collection
+     */
+    default Stream<E> stream() {
+        return new StreamImpl<>(this);
+    }
+
+    /**
+     * Returns a possibly parallel Stream with this collection as its source.
+     * @return a possibly parallel Stream over the elements in this collection
+     */
+    default Stream<E> parallelStream() {
+        return stream().parallel();
     }
 }

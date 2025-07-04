@@ -2,5 +2,5 @@ rootProject.name = 'ClearwingVM'
 include 'transpiler', 'runtime', 'annotations'
 
 if (!System.env.JITPACK) {
-    include 'example'
+    include 'example', 'jdk17-test', 'jdk8-test'
 }

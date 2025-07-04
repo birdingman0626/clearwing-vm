@@ -1,10 +1,32 @@
-sourceCompatibility = 1.8
-targetCompatibility = 1.8
+sourceCompatibility = 17
+targetCompatibility = 17
+
+compileJava {
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.util=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.net=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.io=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang.reflect=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang.module=ALL-UNNAMED']
+    options.compilerArgs += ['--patch-module', 'java.base=' + sourceSets.main.java.srcDirs.join(File.pathSeparator)]
+}
+
+compileTestJava {
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.util=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.net=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.io=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang.reflect=ALL-UNNAMED']
+    options.compilerArgs += ['--add-exports', 'java.base/java.lang.module=ALL-UNNAMED']
+    options.compilerArgs += ['--patch-module', 'java.base=' + sourceSets.main.java.srcDirs.join(File.pathSeparator)]
+}
 
 dependencies {
     implementation('com.github.tommyettinger:RegExodus:0.1.14')
-
     implementation project('::annotations')
+    
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 }
 
 sourceSets {
@@ -16,4 +38,20 @@ sourceSets {
             srcDirs 'res'
         }
     }
+    test {
+        java {
+            srcDirs 'src/test/java'
+        }
+    }
+}
+
+test {
+    useJUnitPlatform()
+    jvmArgs += ['--add-exports', 'java.base/java.lang=ALL-UNNAMED']
+    jvmArgs += ['--add-exports', 'java.base/java.util=ALL-UNNAMED']
+    jvmArgs += ['--add-exports', 'java.base/java.net=ALL-UNNAMED']
+    jvmArgs += ['--add-exports', 'java.base/java.io=ALL-UNNAMED']
+    jvmArgs += ['--add-exports', 'java.base/java.lang.reflect=ALL-UNNAMED']
+    jvmArgs += ['--add-exports', 'java.base/java.lang.module=ALL-UNNAMED']
+    jvmArgs += ['--patch-module', 'java.base=' + sourceSets.main.java.srcDirs.join(File.pathSeparator)]
 }
