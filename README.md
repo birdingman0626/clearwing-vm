@@ -20,8 +20,3 @@ This fork focuses on updating the project to support modern Java versions and st
 *   **Updated Dependencies**: The ASM library has been upgraded to version 9.7 to handle JDK 17 bytecode correctly.
 
 For all other information, including the core architecture, limitations, and setup, please consult the [original README.md](https://github.com/SwitchGDX/clearwing-vm/blob/master/README.md).
-
-## Contributors
-
-- Claude
-- Gemini
