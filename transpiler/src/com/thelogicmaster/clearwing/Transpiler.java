@@ -2,6 +2,7 @@ package com.thelogicmaster.clearwing;
 
 import com.github.javaparser.ast.body.Parameter;
 import com.github.javaparser.ast.type.Type;
+import com.thelogicmaster.clearwing.bytecode.MethodInstruction;
 import io.github.classgraph.ClassGraph;
 import io.github.classgraph.ClassInfo;
 import io.github.classgraph.Resource;
@@ -78,6 +79,10 @@ public class Transpiler {
 	};
 
 	private static void collect(BytecodeClass clazz, Set<BytecodeClass> collected, HashMap<String, BytecodeClass> classMap) {
+		collect(clazz, collected, classMap, null);
+	}
+
+	private static void collect(BytecodeClass clazz, Set<BytecodeClass> collected, HashMap<String, BytecodeClass> classMap, TranspilerConfig config) {
 		collected.add(clazz);
 		clazz.collectDependencies(classMap);
 		Set<String> dependencies = clazz.getDependencies();
@@ -86,11 +91,13 @@ public class Transpiler {
 				continue;
 			BytecodeClass depClass = classMap.get(dependency);
 			if (depClass == null) {
-				System.err.println("Failed to find class dependency: " + dependency);
+				if (config == null || !shouldSuppressWarning(dependency, config)) {
+					logError("Failed to find class dependency: " + dependency);
+				}
 				continue;
 			}
 			if (!collected.contains(depClass))
-				collect(depClass, collected, classMap);
+				collect(depClass, collected, classMap, config);
 		}
 	}
 
@@ -125,6 +132,98 @@ public class Transpiler {
 	private static <T> Collection<Map.Entry<String, T>> filterByPattern(String expression, Collection<Map.Entry<String, T>> entries) {
 		Pattern pattern = compileQualifiedPattern(expression);
 		return entries.stream().filter(entry -> pattern.matcher(entry.getKey()).matches()).collect(Collectors.toList());
+	}
+
+	/**
+	 * Trims unused methods from the class set to reduce binary size
+	 */
+	private static void trimUnusedMethods(Set<BytecodeClass> required, BytecodeClass mainClass, HashMap<String, BytecodeClass> classMap) {
+		logDebug("Starting method usage analysis...");
+		
+		// Track methods that are known to be used
+		Set<BytecodeMethod> usedMethods = new HashSet<>();
+		
+		// Add entry points
+		for (BytecodeClass clazz : required) {
+			// Static initializers are always needed
+			for (BytecodeMethod method : clazz.getMethods()) {
+				if (method.isStaticInitializer()) {
+					usedMethods.add(method);
+				}
+			}
+			
+			// Finalizers are always needed
+			for (BytecodeMethod method : clazz.getMethods()) {
+				if (method.isFinalizer()) {
+					usedMethods.add(method);
+				}
+			}
+			
+			// Main method is needed if it exists
+			if (clazz == mainClass) {
+				for (BytecodeMethod method : clazz.getMethods()) {
+					if (method.isMain()) {
+						usedMethods.add(method);
+					}
+				}
+			}
+			
+			// All native methods are needed
+			for (BytecodeMethod method : clazz.getMethods()) {
+				if (method.isNative()) {
+					usedMethods.add(method);
+				}
+			}
+			
+			// All public methods on annotation interfaces are needed
+			if (clazz.isAnnotation()) {
+				for (BytecodeMethod method : clazz.getMethods()) {
+					if (method.isPublic()) {
+						usedMethods.add(method);
+					}
+				}
+			}
+		}
+		
+		// Propagate usage through method calls
+		boolean changed = true;
+		while (changed) {
+			changed = false;
+			Set<BytecodeMethod> newMethods = new HashSet<>();
+			
+			for (BytecodeMethod method : usedMethods) {
+				if (!method.hasBody()) continue;
+				
+				// Find all method calls within this method
+				for (var instruction : method.getInstructions()) {
+					if (instruction instanceof MethodInstruction) {
+						var methodInstr = (MethodInstruction) instruction;
+						BytecodeMethod target = methodInstr.getResolvedMethod();
+						if (target != null && !usedMethods.contains(target)) {
+							newMethods.add(target);
+							changed = true;
+						}
+					}
+				}
+			}
+			
+			usedMethods.addAll(newMethods);
+		}
+		
+		// Remove unused methods from classes
+		int removedCount = 0;
+		for (BytecodeClass clazz : required) {
+			Iterator<BytecodeMethod> it = clazz.getMethods().iterator();
+			while (it.hasNext()) {
+				BytecodeMethod method = it.next();
+				if (!usedMethods.contains(method) && !method.isConstructor() && !method.isAbstract()) {
+					it.remove();
+					removedCount++;
+				}
+			}
+		}
+		
+		logInfo("Removed " + removedCount + " unused methods from " + required.size() + " classes");
 	}
 
 	/**
@@ -181,7 +280,7 @@ public class Transpiler {
 				} else if (segment instanceof JavaMethodParser.JavaMethod) {
 					JavaMethodParser.JavaMethod method = (JavaMethodParser.JavaMethod)segment;
 					if (method.getNativeCode() == null) {
-						System.err.println("Warning: No native method body for: " + method.getName());
+						logWarn("No native method body for: " + method.getName());
 						continue;
 					}
 					MethodSignature signature = new MethodSignature(method.getName(), method.getDescriptor(), null);
@@ -313,12 +412,12 @@ public class Transpiler {
 			int separator = intrinsic.lastIndexOf('.');
 			int descIndex = intrinsic.indexOf('(');
 			if (separator < 0 || descIndex < 0) {
-				System.out.println("Warning: Invalid intrinsic format: '" + intrinsic + "'");
+				logWarn("Invalid intrinsic format: '" + intrinsic + "'");
 				continue;
 			}
 			BytecodeClass clazz = classMap.get(Utils.sanitizeName(intrinsic.substring(0, separator)));
 			if (clazz == null) {
-				System.out.println("Warning: Failed to find class for intrinsic: '" + intrinsic + "'");
+				logWarn("Failed to find class for intrinsic: '" + intrinsic + "'");
 				continue;
 			}
 			String name = intrinsic.substring(separator + 1, descIndex);
@@ -331,8 +430,8 @@ public class Transpiler {
 					break;
 				}
 			if (!found)
-				System.out.println("Warning: Failed to mark method as intrinsic for: '" + intrinsic + "'");
-			collect(clazz, required, classMap);
+				logWarn("Failed to mark method as intrinsic for: '" + intrinsic + "'");
+			collect(clazz, required, classMap, config);
 		}
 		
 		// Mark JNI classes
@@ -359,30 +458,38 @@ public class Transpiler {
 				}
 		}
 		if (mainClass == null)
-			System.out.println("Main class not found, omitting entrypoint");
+			logWarn("Main class not found, omitting entrypoint");
 
 		// Collect required classes
 		for (String dep: NATIVE_DEPENDENCIES)
-			collect(classMap.get(dep), required, classMap);
+			collect(classMap.get(dep), required, classMap, config);
 		ArrayList<String> requiredPatterns = new ArrayList<>(config.getNonOptimized());
 		for (String pattern: requiredPatterns)
 			for (Map.Entry<String, BytecodeClass> entry: filterByPattern(pattern, classMap.entrySet()))
-				collect(entry.getValue(), required, classMap);
+				collect(entry.getValue(), required, classMap, config);
 		if (mainClass != null)
-			collect(mainClass, required, classMap);
+			collect(mainClass, required, classMap, config);
 
 		// Generate natives from jnigen style comments
 		List<String> jniIncludes = processSources(sourceDirs, new File(outputDir, "src"), config.getSourceIgnores());
 		for (String include : jniIncludes)
-			collect(classMap.get(include), required, classMap);
+			collect(classMap.get(include), required, classMap, config);
 		
-		// Todo: Trim unused methods
+		// Trim unused methods
+		logInfo("Optimizing: trimming unused methods...");
+		trimUnusedMethods(required, mainClass, classMap);
 
 		// Write transpiled output
+		logInfo("Generating C++ code for " + required.size() + " classes...");
 		File srcDir = new File(outputDir, "src");
 		File includeDir = srcDir;//new File(outputDir, "include");
 		boolean failed = false;
+		int classCount = 0;
 		for (BytecodeClass clazz: required) {
+			classCount++;
+			if (classCount % 10 == 0 || classCount == required.size()) {
+				logDebug("Generated " + classCount + "/" + required.size() + " classes");
+			}
 			File header = new File(includeDir, Utils.getClassFilename(clazz.getName()) + ".h");
 			Paths.get(header.getAbsolutePath()).getParent().toFile().mkdirs();
 			FileWriter writer = new FileWriter(header);
@@ -398,7 +505,7 @@ public class Transpiler {
 			try {
 				clazz.generateCpp(builder, config, classMap);
 			} catch (Exception e) {
-				System.err.println("ERR: " + e.getMessage());
+				logError("Failed to generate C++ for class " + clazz.getName() + ": " + e.getMessage());
 				failed = true;
 			}
 			writer.write(builder.toString());
@@ -445,7 +552,57 @@ public class Transpiler {
 		return files;
 	}
 
-	// Todo: Logging
+	// Logging system for transpiler output
+	public enum LogLevel {
+		ERROR(0), WARN(1), INFO(2), DEBUG(3);
+		private final int level;
+		LogLevel(int level) { this.level = level; }
+		public boolean shouldLog(LogLevel other) { return this.level >= other.level; }
+	}
+	
+	private static LogLevel currentLogLevel = LogLevel.INFO;
+	
+	private static void log(LogLevel level, String message) {
+		if (currentLogLevel.shouldLog(level)) {
+			String prefix = switch (level) {
+				case ERROR -> "[ERROR] ";
+				case WARN -> "[WARN] ";
+				case INFO -> "[INFO] ";
+				case DEBUG -> "[DEBUG] ";
+			};
+			System.out.println(prefix + message);
+		}
+	}
+	
+	private static void logError(String message) {
+		log(LogLevel.ERROR, message);
+	}
+	
+	private static void logWarn(String message) {
+		log(LogLevel.WARN, message);
+	}
+	
+	private static void logInfo(String message) {
+		log(LogLevel.INFO, message);
+	}
+	
+	private static void logDebug(String message) {
+		log(LogLevel.DEBUG, message);
+	}
+	
+	private static boolean shouldSuppressWarning(String className, TranspilerConfig config) {
+		if (config.getWarningIgnores().isEmpty()) {
+			return false;
+		}
+		for (String pattern : config.getWarningIgnores()) {
+			Pattern compiled = compileQualifiedPattern(pattern);
+			if (compiled.matcher(className).matches()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	// Todo: Configurable definitions for Config.hpp (For selective native patches, for example)
 	public static void main (String[] args) throws IOException, ArgumentParserException {
 		ArgumentParser parser = ArgumentParsers.newFor("Transpiler").build()
@@ -473,6 +630,11 @@ public class Transpiler {
 				.required(false)
 				.setDefault(false)
 				.help("Copy default project files");
+		parser.addArgument("-v", "--verbose")
+				.required(false)
+				.choices("error", "warn", "info", "debug")
+				.setDefault("info")
+				.help("Set logging verbosity level");
 		Namespace namespace = parser.parseArgs(args);
 
 		List<File> inputs = getFileArgs(namespace, "input");
@@ -480,12 +642,25 @@ public class Transpiler {
 
 		File outputDir = new File(namespace.getString("output"));
 
+		// Set logging level
+		String verboseLevel = namespace.getString("verbose");
+		currentLogLevel = switch (verboseLevel) {
+			case "error" -> LogLevel.ERROR;
+			case "warn" -> LogLevel.WARN;
+			case "info" -> LogLevel.INFO;
+			case "debug" -> LogLevel.DEBUG;
+			default -> LogLevel.INFO;
+		};
+
 		String configPath = namespace.getString("config");
 		TranspilerConfig config = configPath == null ? new TranspilerConfig() : new TranspilerConfig(Files.readString(Path.of(configPath)));
 		if (namespace.getString("main") != null)
 			config.setMainClass(namespace.getString("main"));
 		if (namespace.getBoolean("project") != null)
 			config.setWritingProjectFiles(namespace.getBoolean("project"));
+		
+		logInfo("Starting transpilation with " + inputs.size() + " input(s) and " + sourceDirs.size() + " source directory(ies)");
 		transpile(inputs, sourceDirs, outputDir, config);
+		logInfo("Transpilation completed successfully");
 	}
 }

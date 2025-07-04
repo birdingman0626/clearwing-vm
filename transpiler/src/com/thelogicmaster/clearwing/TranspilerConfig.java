@@ -8,12 +8,12 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 public class TranspilerConfig {
-    // Todo: An ignore-list for classes to avoid transpiler warnings from unused classes
     private List<String> nonOptimized = new ArrayList<>(); // Patterns for classes to not optimize out even if unused
     private List<String> sourceIgnores = new ArrayList<>(); // Patterns for source files to ignore for JNIGen style inlined C++
     private List<String> intrinsics = new ArrayList<>(); // A list of methods to treat as native so that they can be patched (For example, `java.lang.Integer.toString()Ljava/lang/String;`)
     private List<String> jniClasses = new ArrayList<>(); // A list of patterns to generate JNI class bindings for (As opposed to regular native linked functions)
     private List<String> definitions = new ArrayList<>(); // Custom definitions to add to config.hpp
+    private List<String> warningIgnores = new ArrayList<>(); // Patterns for classes to suppress warnings about (e.g., missing dependencies, unused classes)
     private boolean projectFiles = true; // Whether to generate basic project files like the CMake config
     private String mainClass; // An optional "main class" that contains the entrypoint main function
     private boolean lineNumbers = true; // Enable stack trace line numbers (Requires stack traces, disable for a slight performance increase)
@@ -32,6 +32,7 @@ public class TranspilerConfig {
         jniClasses = getArray(json, "jniClasses");
         intrinsics = getArray(json, "intrinsics");
         definitions = getArray(json, "definitions");
+        warningIgnores = getArray(json, "warningIgnores");
         projectFiles = json.optBoolean("generateProjectFiles", false);
         mainClass = json.optString("mainClass");
         lineNumbers = json.optBoolean("useLineNumbers", true);
@@ -52,6 +53,7 @@ public class TranspilerConfig {
         sourceIgnores.addAll(config.sourceIgnores);
         intrinsics.addAll(config.intrinsics);
         definitions.addAll(config.definitions);
+        warningIgnores.addAll(config.warningIgnores);
         platformOverride = platformOverride || config.platformOverride;
     }
 
@@ -133,5 +135,13 @@ public class TranspilerConfig {
 
     public void setOptimizations(boolean optimizations) {
         this.optimizations = optimizations;
+    }
+
+    public List<String> getWarningIgnores() {
+        return warningIgnores;
+    }
+
+    public void setWarningIgnores(List<String> warningIgnores) {
+        this.warningIgnores = warningIgnores;
     }
 }

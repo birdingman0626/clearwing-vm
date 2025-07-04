@@ -206,6 +206,10 @@ public class BytecodeMethod {
 		return originalName.equals("<init>");
 	}
 
+	public boolean isPublic() {
+		return (access & Opcodes.ACC_PUBLIC) == Opcodes.ACC_PUBLIC;
+	}
+
 	public BytecodeClass getOwner () {
 		return clazz;
 	}

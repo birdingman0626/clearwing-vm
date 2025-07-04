@@ -1,11 +1,15 @@
 #include "Array.hpp"
 #include "java/lang/Object.h"
+#include "java/lang/Cloneable.h"
 #include <map>
 #include <vector>
 #include <mutex>
 #include <cstring>
 
 extern "C" {
+
+// Array interfaces - arrays implement Cloneable
+static jclass cloneableInterface = &class_java_lang_Cloneable;
 
 void clinit_array(jcontext ctx) {
 }
@@ -97,8 +101,8 @@ jclass getArrayClass(jclass componentType, int dimensions) {
                 .arrayDimensions = (jint) vector.size() + 1,
                 .componentClass = (jref) component,
                 .access = 0x400,
-                .interfaceCount = 0, // Todo: Cloneable
-                .nativeInterfaces = (jref) nullptr,
+                .interfaceCount = 1, // Array implements Cloneable
+                .nativeInterfaces = (jref) &cloneableInterface,
                 .fieldCount = 0,
                 .nativeFields = (jref) nullptr,
                 .methodCount = 0,

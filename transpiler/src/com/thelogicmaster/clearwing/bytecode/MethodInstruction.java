@@ -217,4 +217,8 @@ public class MethodInstruction extends Instruction {
     public MethodSignature getSignature() {
         return signature;
     }
+
+    public BytecodeMethod getResolvedMethod() {
+        return resolvedMethod;
+    }
 }

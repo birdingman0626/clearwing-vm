@@ -522,6 +522,10 @@ static void collectionThreadFunc(jcontext ctx) {
 
             if (!collected.empty()) {
                 for (jobject obj : collected) {
+                    // Clear weak references during finalization (JNI-compliant behavior)
+                    for (auto[it, end] = weakReferences.equal_range(obj); it != end; ++it)
+                        it->second->F_ptr = 0;
+                    
                     tryCatch(ctx, [&]{
                         ((finalizer_ptr)((void **)obj->vtable)[VTABLE_java_lang_Object_finalize])(ctx, obj);
                     }, &class_java_lang_Throwable, [](jobject ignored){});
@@ -670,9 +674,8 @@ void runGC(jcontext ctx) {
         obj->gcMark = GC_MARK_COLLECTED;
         collectedObjects.emplace_back(obj);
 
-        // Update weak references
-        for (auto[it, end] = weakReferences.equal_range(obj); it != end; ++it)
-            it->second->F_ptr = 0; // Todo: Always updating weak references here rather than at finalization may be problematic in some cases for JNI
+        // Store weak references for later clearing during finalization
+        // Note: We don't clear weak references here as per JNI spec - they should be cleared during finalization
     }
 
 #if false // Todo: Use macro

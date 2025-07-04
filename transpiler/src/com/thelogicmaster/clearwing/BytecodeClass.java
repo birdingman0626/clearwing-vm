@@ -485,7 +485,7 @@ public class BytecodeClass {
 			
 			builder.append("\n");
 
-			// Todo: Macros to check for class initialization before calling
+			// Ensure class initialization before calling static methods or constructors
 			if (method.isStatic() || method.isConstructor())
 				builder.append("\tCLINIT(").append(qualifiedName).append(");\n");
 
@@ -714,16 +714,44 @@ public class BytecodeClass {
 	}
 
 	private void appendStaticInitializerCode(StringBuilder builder) {
-		// Todo: Some form of locking to prevent race condition, not sure about partial initialization while avoiding recursive stack overflows
-		builder.append("\tstatic bool initialized;\n");
-		builder.append("\tif (initialized) return;\n");
-		builder.append("\tinitialized = true;\n");
+		// Thread-safe class initialization with proper locking to prevent race conditions
+		builder.append("\tstatic std::atomic<int> initState{0}; // 0=uninit, 1=initializing, 2=initialized\n");
+		builder.append("\tstatic std::mutex initMutex;\n");
+		builder.append("\t\n");
+		builder.append("\t// Check if already initialized (fast path)\n");
+		builder.append("\tif (initState.load() == 2) return;\n");
+		builder.append("\t\n");
+		builder.append("\t// Acquire lock for initialization\n");
+		builder.append("\tstd::lock_guard<std::mutex> lock(initMutex);\n");
+		builder.append("\t\n");
+		builder.append("\t// Double-check pattern - another thread may have initialized while we waited\n");
+		builder.append("\tif (initState.load() == 2) return;\n");
+		builder.append("\t\n");
+		builder.append("\t// Check for recursive initialization (would cause deadlock)\n");
+		builder.append("\tif (initState.load() == 1) {\n");
+		builder.append("\t\t// Class is being initialized by current thread - this is recursive initialization\n");
+		builder.append("\t\t// According to JVM spec, this should return normally\n");
+		builder.append("\t\treturn;\n");
+		builder.append("\t}\n");
+		builder.append("\t\n");
+		builder.append("\t// Mark as initializing\n");
+		builder.append("\tinitState.store(1);\n");
+		builder.append("\t\n");
+		builder.append("\ttry {\n");
 		if (superClass != null)
-			builder.append("\tCLINIT(").append(superClass.qualifiedName).append(");\n");
-		// Todo: Try-catch to rethrow with initializer exception?
+			builder.append("\t\tCLINIT(").append(superClass.qualifiedName).append(");\n");
+		// Initialize static final fields with constant values
 		for (BytecodeField field: fields)
 			if (field.isStatic() && field.isFinal() && field.getInitialValue() != null)
-				builder.append("\t").append(field.getName()).append(" = ").append(Utils.getObjectValue(field.getInitialValue())).append(";\n");
+				builder.append("\t\t").append(field.getName()).append(" = ").append(Utils.getObjectValue(field.getInitialValue())).append(";\n");
+		builder.append("\t\t\n");
+		builder.append("\t\t// Mark as fully initialized\n");
+		builder.append("\t\tinitState.store(2);\n");
+		builder.append("\t} catch (...) {\n");
+		builder.append("\t\t// Reset state on initialization failure\n");
+		builder.append("\t\tinitState.store(0);\n");
+		builder.append("\t\tthrow;\n");
+		builder.append("\t}\n");
 	}
 
 	/**

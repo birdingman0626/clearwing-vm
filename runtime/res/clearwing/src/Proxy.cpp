@@ -229,7 +229,11 @@ static void *createProxyFunc(jclass *proxyArgTypes, int proxyArgCount, jclass re
     cc.finalize();
 
     void *fn;
-    Error err = rt.add(&fn, &code); // Todo: Error handling
+    Error err = rt.add(&fn, &code);
+    if (err) {
+        // JIT compilation failed - this is a critical error for proxy creation
+        return nullptr;
+    }
     return fn;
 #endif
 }

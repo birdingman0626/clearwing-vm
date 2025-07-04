@@ -26,26 +26,47 @@ public class InvokeDynamicInstruction extends Instruction {
 
     @Override
     public void appendUnoptimized(StringBuilder builder, TranspilerConfig config) {
-        // Todo: Cache proxies without args 
         builder.append("\t{ /* InvokeDynamic */\n");
         builder.append("\t\tCLINIT(").append(qualifiedProxyClassName).append(");\n");
-        builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
-        for (int i = proxyFields.length - 1; i >= 0; i--)
-            builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append("(--sp)->").append(proxyFields[i].getBasicType().getStackName()).append(";\n");
-        builder.append("\t\tPUSH_OBJECT((jobject) proxy);\n");
+        
+        // Cache proxies without captured variables for performance
+        if (proxyFields.length == 0) {
+            builder.append("\t\tstatic jobject cachedProxy = nullptr;\n");
+            builder.append("\t\tif (!cachedProxy) {\n");
+            builder.append("\t\t\tcachedProxy = (jobject) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
+            builder.append("\t\t\taddToRootObjects(cachedProxy); // Prevent GC collection\n");
+            builder.append("\t\t}\n");
+            builder.append("\t\tPUSH_OBJECT(cachedProxy);\n");
+        } else {
+            builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
+            for (int i = proxyFields.length - 1; i >= 0; i--)
+                builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append("(--sp)->").append(proxyFields[i].getBasicType().getStackName()).append(";\n");
+            builder.append("\t\tPUSH_OBJECT((jobject) proxy);\n");
+        }
         builder.append("\t}\n");
     }
 
     @Override
     public void appendOptimized(StringBuilder builder, TranspilerConfig config) {
-        // Todo: Cache proxies without args 
         builder.append("\t{ /* InvokeDynamic */\n");
         builder.append("\t\tCLINIT(").append(qualifiedProxyClassName).append(");\n");
-        builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
-        for (int i = proxyFields.length - 1; i >= 0; i--)
-            builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append(inputs.get(i).arg()).append(";\n");
-        builder.append("\t");
-        outputs.get(0).buildAssignment(builder).append("(jobject) proxy;\n");
+        
+        // Cache proxies without captured variables for performance
+        if (proxyFields.length == 0) {
+            builder.append("\t\tstatic jobject cachedProxy = nullptr;\n");
+            builder.append("\t\tif (!cachedProxy) {\n");
+            builder.append("\t\t\tcachedProxy = (jobject) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
+            builder.append("\t\t\taddToRootObjects(cachedProxy); // Prevent GC collection\n");
+            builder.append("\t\t}\n");
+            builder.append("\t");
+            outputs.get(0).buildAssignment(builder).append("cachedProxy;\n");
+        } else {
+            builder.append("\t\tauto proxy").append(" = (").append(qualifiedProxyClassName).append(" *) gcAlloc(ctx, &class_").append(qualifiedProxyClassName).append(");\n");
+            for (int i = proxyFields.length - 1; i >= 0; i--)
+                builder.append("\t\tproxy->F_field").append(i).append(" = ").append(proxyFields[i].isPrimitive() ? "" : "(jref) ").append(inputs.get(i).arg()).append(";\n");
+            builder.append("\t");
+            outputs.get(0).buildAssignment(builder).append("(jobject) proxy;\n");
+        }
         builder.append("\t}\n");
     }
 
