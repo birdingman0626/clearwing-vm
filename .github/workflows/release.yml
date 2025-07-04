@@ -1,0 +1,84 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+        
+    - name: Cache Gradle dependencies
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.gradle/caches
+          ~/.gradle/wrapper
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+        restore-keys: |
+          ${{ runner.os }}-gradle-
+          
+    - name: Make gradlew executable
+      run: chmod +x ./gradlew
+      
+    - name: Build core modules
+      run: ./gradlew :annotations:build :transpiler:build
+      
+    - name: Run tests
+      run: ./gradlew :annotations:test :transpiler:test
+      
+    - name: Build transpiler shadow JAR
+      run: ./gradlew :transpiler:shadowJar
+      
+    - name: Get version
+      id: get_version
+      run: |
+        echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+        JAR_FILE=$(find ./transpiler/build/libs -name "transpiler-*.jar" -type f | head -1)
+        echo "JAR_FILE=$JAR_FILE" >> $GITHUB_OUTPUT
+      
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.VERSION }}
+        release_name: Release ${{ steps.get_version.outputs.VERSION }}
+        body: |
+          Clearwing VM Release ${{ steps.get_version.outputs.VERSION }}
+          
+          ## What's included
+          - `transpiler.jar` - The main transpiler executable JAR
+          - Source code archive
+          
+          ## Usage
+          ```bash
+          java -jar transpiler.jar --help
+          ```
+          
+          See the [README](https://github.com/TheLogicMaster/clearwing-vm/blob/master/README.md) for complete usage instructions.
+        draft: false
+        prerelease: false
+        
+    - name: Upload transpiler JAR
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ steps.get_version.outputs.JAR_FILE }}
+        asset_name: transpiler.jar
+        asset_content_type: application/java-archive
